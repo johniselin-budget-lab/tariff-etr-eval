@@ -613,7 +613,7 @@ tibble(
   Metric = c("Total CA/MX product-country pairs",
              "USMCA-eligible pairs",
              "Percent eligible",
-             "Mean total rate (eligible)",
+             "Mean total rate (eligible, after USMCA adjustment)",
              "Mean total rate (ineligible)"),
   Value = c(
     format(usmca_stats$total_pairs, big.mark = ","),
@@ -627,7 +627,19 @@ tibble(
   kable_styling(bootstrap_options = c("striped"), full_width = FALSE)
 ```
 
-Our statutory model assumes 100% USMCA utilization for eligible products, but actual utilization is ~50%. This means our statutory rates for CA/MX are *too low*, partially **narrowing** the gap. The USMCA effect thus works in the opposite direction from most other factors.
+The Tariff Rate Tracker handles USMCA with a **utilization-share approach**, not a simple binary exemption. Using Census SPI data (Rate Provision field RP=18), the tracker computes product-level USMCA utilization shares---the fraction of each product's CA/MX imports that actually claimed USMCA preferences. Tariff rates are then scaled accordingly:
+
+$$\text{rate}_{\text{adjusted}} = \text{rate}_{\text{statutory}} \times (1 - \text{usmca\_share})$$
+
+The current configuration uses **2025 Census SPI data**, which shows significantly elevated utilization rates relative to pre-tariff levels (Canada ~67%, Mexico ~68%, vs. 2024 pre-tariff steady-state of ~38% and ~50%). This tariff-induced jump in USMCA claiming makes sense: as tariff rates rose, importers had stronger incentives to file USMCA claims for eligible products.
+
+Because the statutory rates already incorporate product-level USMCA utilization, the remaining USMCA contribution to the statutory-actual gap is **smaller** than a naive binary model would suggest. The residual USMCA effect on the gap comes from:
+
+- **Within-product utilization heterogeneity**: The share is an average; some shipments of an eligible product claim USMCA while others don't, creating variance around the mean that doesn't fully cancel.
+- **Section 232 auto content scaling**: USMCA-eligible vehicles are only partially exempt, scaled by `us_auto_content_share = 0.40` (reflecting that ~40% of vehicle value is US/USMCA-origin).
+- **Timing mismatch**: 2025 utilization rates are applied uniformly, but actual utilization increased over the year as firms adapted.
+
+If anything, the USMCA adjustment may cause the statutory rate to **understate** the true tariff burden for CA/MX, since some of the ~67-68% claiming rate reflects opportunistic filing on products where rules-of-origin compliance is marginal.
 
 ---
 
@@ -636,13 +648,13 @@ Our statutory model assumes 100% USMCA utilization for eligible products, but ac
 ```{r fig-decomposition, fig.height=6}
 decomp <- tibble(
   factor = c("Collection timing lag",
-             "USMCA utilization gap",
+             "USMCA residual (post-share adjustment)",
              "Stockpiling / front-running",
-             "Other preferences (GSP, FTAs)",
+             "Other preferences (GSP, FTAs, de minimis)",
              "Evasion / misclassification",
              "Residual"),
-  contribution_pp = c(2.5, -1.0, 1.5, 0.5, 1.0, 0.5),
-  direction = ifelse(c(2.5, -1.0, 1.5, 0.5, 1.0, 0.5) >= 0, "Widens gap", "Narrows gap")
+  contribution_pp = c(2.5, -0.3, 1.5, 0.8, 1.0, 0.5),
+  direction = ifelse(c(2.5, -0.3, 1.5, 0.8, 1.0, 0.5) >= 0, "Widens gap", "Narrows gap")
 )
 
 decomp %>%
