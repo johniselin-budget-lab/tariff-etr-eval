@@ -6,9 +6,15 @@
 #
 # Columns pulled:
 #   CON_VAL_MO  - Consumption value of imports (monthly, USD)
-#   DUT_VAL_MO  - Calculated duty (monthly, USD)
+#   CAL_DUT_MO  - Calculated duty (monthly, USD) -- estimated statutory duty amount
+#   DUT_VAL_MO  - Dutiable value (monthly, USD) -- value of imports subject to duty
 #   I_COMMODITY - HS chapter code (2-digit)
 #   CTY_CODE    - Census country code
+#
+# IMPORTANT: CAL_DUT_MO is the Census estimate of statutory duty. It does NOT
+# reflect actual duties collected. See Census definition:
+# "Estimates of calculated duty do not necessarily reflect amounts of duty paid."
+# DUT_VAL_MO is the dutiable VALUE (not the duty itself).
 #
 # Coverage: 2024 (baseline) + 2025 (tariff escalation) + 2026 (as available)
 # Output:  data/census_hs2_country_monthly.csv
@@ -64,7 +70,7 @@ CENSUS_COUNTRIES <- tribble(
 pull_chapter_month <- function(hs2, year_month, max_retries = 3) {
   url <- paste0(
     CENSUS_API_BASE,
-    "?get=CON_VAL_MO,DUT_VAL_MO,CTY_CODE",
+    "?get=CON_VAL_MO,CAL_DUT_MO,DUT_VAL_MO,CTY_CODE",
     "&I_COMMODITY=", hs2,
     "&time=", year_month,
     "&COMM_LVL=HS2"
@@ -88,16 +94,14 @@ pull_chapter_month <- function(hs2, year_month, max_retries = 3) {
 
       # First row is header, rest is data
       df <- as.data.frame(parsed[-1, , drop = FALSE], stringsAsFactors = FALSE)
-      # Column mapping depends on API response structure
-      # API returns: CON_VAL_MO, DUT_VAL_MO, I_COMMODITY, [CTY_CODE], time, COMM_LVL, ...
-      # Find the CTY_CODE column
+      # Column mapping — find each field by header name
       header <- parsed[1, ]
       cty_idx <- which(header == "CTY_CODE")[1]
       con_idx <- which(header == "CON_VAL_MO")[1]
+      cal_idx <- which(header == "CAL_DUT_MO")[1]
       dut_idx <- which(header == "DUT_VAL_MO")[1]
 
       if (is.na(cty_idx)) {
-        # No country column — this is a total row, skip
         return(NULL)
       }
 
@@ -105,7 +109,8 @@ pull_chapter_month <- function(hs2, year_month, max_retries = 3) {
         hs2 = hs2,
         cty_code = df[[cty_idx]],
         con_val_mo = as.numeric(df[[con_idx]]),
-        dut_val_mo = as.numeric(df[[dut_idx]]),
+        cal_dut_mo = if (!is.na(cal_idx)) as.numeric(df[[cal_idx]]) else NA_real_,
+        dut_val_mo = if (!is.na(dut_idx)) as.numeric(df[[dut_idx]]) else NA_real_,
         year_month = year_month
       ) %>%
         # Filter out aggregate rows (world totals "-", region subtotals "00XX")
@@ -197,7 +202,8 @@ combined <- combined %>%
     year = as.integer(substr(year_month, 1, 4)),
     month = as.integer(substr(year_month, 6, 7)),
     date = as.Date(paste0(year_month, "-01")),
-    effective_rate = dut_val_mo / con_val_mo * 100  # Actual ETR at chapter x country
+    calc_etr = cal_dut_mo / con_val_mo * 100,  # Census calculated duty ETR
+    dutiable_share = dut_val_mo / con_val_mo * 100  # Share of imports that are dutiable
   ) %>%
   arrange(year_month, hs2, cty_code)
 

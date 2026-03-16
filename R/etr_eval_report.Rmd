@@ -142,10 +142,10 @@ FIGURE_METADATA <- list(
   ),
   F6 = list(
     label    = "Figure 6",
-    title    = "Monthly Actual ETR by HS Chapter (Census Calculated Duty)",
-    subtitle = "Top 10 chapters by 2025 import value; calculated duty / consumption value",
+    title    = "Dutiable Share by HS Chapter",
+    subtitle = "Top 10 chapters by 2025 import value; dutiable value / consumption value",
     source   = "Census Bureau International Trade API",
-    notes    = "Census 'calculated duty' is the statutory amount before preference programs are applied.",
+    notes    = "Dutiable value is the portion of imports subject to duty, not the duty amount itself. High shares indicate chapters where most trade faces tariffs.",
     y_label  = "Percent"
   ),
   F7 = list(
@@ -500,7 +500,12 @@ cat("*Census trade data not available.*")
 
 ## Chapter-Level Effective Rates (Census Calculated Duty)
 
-The Census Bureau reports "calculated duty" at the chapter × country × month level. This represents the statutory duty amount before preference programs (USMCA, GSP, FTAs) are applied. Comparing this against actual Treasury collections gives a measure of total preference utilization.
+The Census Bureau reports two duty-related fields at the chapter × country × month level:
+
+- **`CAL_DUT_MO`** (Calculated Duty): The estimated duty amount based on tariff schedules and reported values. Per Census: *"Estimates of calculated duty do not necessarily reflect amounts of duty paid."* This overstates actual collections because it doesn't fully account for preference programs.
+- **`DUT_VAL_MO`** (Dutiable Value): The value of imports *subject to duty*---not the duty itself. This tells us what share of imports are dutiable vs. duty-free.
+
+The figure below uses dutiable value as a share of consumption value, which indicates the fraction of imports in each chapter that face some tariff. A re-pull with `CAL_DUT_MO` (actual calculated duty amounts) is pending.
 
 ```{r fig-chapter-etr, eval=census_available}
 # Top 10 chapters by 2025 import value
