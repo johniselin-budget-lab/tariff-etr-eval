@@ -39,8 +39,23 @@ if (length(missing) > 0) {
   cat("  All required data files found.\n\n")
 }
 
-# --- Step 1: Render report ---
-cat("Step 1: Rendering ETR evaluation report...\n")
+# --- Step 1: Pull Census trade data (if needed) ---
+census_file <- here("data", "census_hs2_country_monthly.csv")
+if (!file.exists(census_file)) {
+  cat("Step 1: Pulling Census trade data from API...\n")
+  tryCatch({
+    source(here("R", "01_pull_census_trade.R"))
+    cat("  Census data pull complete.\n\n")
+  }, error = function(e) {
+    cat("  ERROR pulling Census data:", conditionMessage(e), "\n\n")
+  })
+} else {
+  cat("Step 1: Census trade data already exists, skipping pull.\n")
+  cat("  (Delete", census_file, "to force re-pull)\n\n")
+}
+
+# --- Step 2: Render report ---
+cat("Step 2: Rendering ETR evaluation report...\n")
 
 output_dir <- here("output")
 if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)

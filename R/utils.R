@@ -151,6 +151,35 @@ get_rates_at_date <- function(ts, query_date) {
     filter(valid_from <= query_date, valid_until >= query_date)
 }
 
+# --- Load Census HS2 x country x month data (from 01_pull_census_trade.R) ---
+load_census_trade <- function() {
+  csv_path <- here("data", "census_hs2_country_monthly.csv")
+  if (!file.exists(csv_path)) {
+    stop("Census trade data not found. Run R/01_pull_census_trade.R first.")
+  }
+  read_csv(csv_path, show_col_types = FALSE) %>%
+    mutate(date = as.Date(date))
+}
+
+# --- Census country code to partner group mapping ---
+assign_partner_group <- function(cty_code) {
+  # EU27 census codes
+  eu27 <- c("4280", "4220", "4230", "4240", "4253", "4254", "4270",
+            "4350", "4360", "4380", "4390", "4550", "4560", "4570",
+            "4590", "4610", "4690", "4700", "4720", "4740", "4810",
+            "4760", "4770", "4780", "4840", "4850", "4870")
+  case_when(
+    cty_code == "5700" ~ "China",
+    cty_code == "1220" ~ "Canada",
+    cty_code == "2010" ~ "Mexico",
+    cty_code == "4280" ~ "Japan",
+    cty_code == "5800" ~ "S. Korea",
+    cty_code == "4120" ~ "UK",
+    cty_code %in% eu27 ~ "EU",
+    TRUE ~ "ROW"
+  )
+}
+
 # --- Policy period markers ---
 POLICY_EVENTS <- tibble::tribble(
   ~date,              ~label,

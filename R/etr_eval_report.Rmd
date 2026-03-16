@@ -44,7 +44,7 @@ theme_set(theme_etr())
 # Actual ETR (customs duties / imports, monthly from Census/Treasury via Haver)
 actual_etr <- load_actual_etr() %>%
   filter(date >= "2024-01-01") %>%
-  mutate(actual_rate = effective_rate / 100)  # convert % to proportion
+  mutate(actual_rate = effective_rate / 100)
 
 # Daily statutory ETR (import-weighted, from tariff-rate-tracker)
 daily_statutory <- load_daily_etr() %>%
@@ -58,6 +58,42 @@ monthly_statutory <- collapse_statutory_monthly(daily_statutory)
 
 # Revision dates for policy event context
 revision_dates <- load_revision_dates()
+
+# Census HS2 x country x month (from 01_pull_census_trade.R)
+census_file <- here("data", "census_hs2_country_monthly.csv")
+census_available <- file.exists(census_file)
+if (census_available) {
+  census <- load_census_trade() %>%
+    mutate(partner_group = assign_partner_group(cty_code))
+}
+
+# Statutory timeseries (product-level)
+ts_file <- file.path(TRACKER_DIR, "data", "timeseries", "rate_timeseries.rds")
+ts_available <- file.exists(ts_file)
+if (ts_available) {
+  ts <- load_timeseries()
+  latest_date <- min(Sys.Date(), max(ts$valid_until, na.rm = TRUE))
+  current_rates <- get_rates_at_date(ts, latest_date)
+  baseline_rates <- get_rates_at_date(ts, "2025-01-01")
+
+  chapter_summary <- current_rates %>%
+    mutate(hs2 = substr(hts10, 1, 2)) %>%
+    group_by(hs2) %>%
+    summarize(
+      n_products = n_distinct(hts10),
+      mean_total = mean(total_rate, na.rm = TRUE),
+      mean_232 = mean(rate_232, na.rm = TRUE),
+      mean_301 = mean(rate_301, na.rm = TRUE),
+      mean_ieepa = mean(rate_ieepa_recip, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    arrange(desc(mean_total))
+
+  baseline_by_ch <- baseline_rates %>%
+    mutate(hs2 = substr(hts10, 1, 2)) %>%
+    group_by(hs2) %>%
+    summarize(baseline_rate = mean(total_rate, na.rm = TRUE), .groups = "drop")
+}
 
 # ==============================================================================
 # FIGURE/TABLE METADATA
@@ -77,27 +113,43 @@ FIGURE_METADATA <- list(
     title    = "Statutory-Actual ETR Gap",
     subtitle = "Percentage point difference (statutory minus actual) by month",
     source   = "The Budget Lab analysis",
-    notes    = "Positive values indicate the statutory rate exceeds what is actually collected. Gap reflects avoidance, evasion, timing lags, USMCA utilization, and other factors.",
+    notes    = "Positive values indicate the statutory rate exceeds what is actually collected.",
     y_label  = "Percentage Points"
   ),
   F3 = list(
     label    = "Figure 3",
-    title    = "Statutory ETR by Trading Partner",
-    subtitle = "Import-weighted statutory rate, first-of-month snapshot",
-    source   = "The Budget Lab Tariff Rate Tracker",
+    title    = "Monthly Import Volumes by Trading Partner",
+    subtitle = "Billions USD (consumption value), 2024--2025",
+    source   = "Census Bureau International Trade API",
     notes    = "",
-    y_label  = "Percent"
+    y_label  = "Billions USD"
   ),
   F4 = list(
     label    = "Figure 4",
-    title    = "Import Volume Shifts and the ETR Gap",
-    subtitle = "Monthly real import growth vs. statutory-actual gap, by partner",
-    source   = "Census Bureau via Haver Analytics; The Budget Lab analysis",
-    notes    = "Stockpiling hypothesis: countries with larger import surges before tariff effective dates may show larger subsequent gaps.",
-    y_label  = ""
+    title    = "Import Surge by HS Chapter: 2025 vs. 2024",
+    subtitle = "Year-over-year import growth (%) in Q1 2025 vs. tariff increase (pp)",
+    source   = "Census Bureau International Trade API; The Budget Lab Tariff Rate Tracker",
+    notes    = "Each point is an HS2 chapter. Chapters in the upper-right experienced both large tariff increases and large import surges, consistent with front-running.",
+    y_label  = "Q1 2025 YoY Import Growth (%)"
   ),
   F5 = list(
     label    = "Figure 5",
+    title    = "Transshipment Indicator: Import Shifts by Origin",
+    subtitle = "Change in import share from China vs. Vietnam/Thailand/Malaysia/Cambodia",
+    source   = "Census Bureau International Trade API",
+    notes    = "A negative correlation suggests trade diversion through transshipment countries.",
+    y_label  = ""
+  ),
+  F6 = list(
+    label    = "Figure 6",
+    title    = "Monthly Actual ETR by HS Chapter (Census Calculated Duty)",
+    subtitle = "Top 10 chapters by 2025 import value; calculated duty / consumption value",
+    source   = "Census Bureau International Trade API",
+    notes    = "Census 'calculated duty' is the statutory amount before preference programs are applied.",
+    y_label  = "Percent"
+  ),
+  F7 = list(
+    label    = "Figure 7",
     title    = "Tariff Gap Decomposition: Potential Explanatory Factors",
     subtitle = "Estimated contribution of avoidance channels to the statutory-actual gap",
     source   = "The Budget Lab analysis",
@@ -137,7 +189,6 @@ comparison <- monthly_statutory %>%
     actual_pct = actual_rate * 100
   )
 
-# Latest comparison stats
 latest_comp <- comparison %>% filter(!is.na(actual_rate)) %>% filter(date == max(date))
 latest_month <- format(latest_comp$date, "%B %Y")
 latest_statutory <- sprintf("%.1f", latest_comp$statutory_pct)
@@ -162,22 +213,18 @@ The statutory rate (navy line) represents the daily import-weighted average tari
 
 ```{r fig-actual-vs-statutory}
 ggplot() +
-  # Statutory: daily step line
   geom_step(data = daily_statutory,
             aes(x = date, y = weighted_etr * 100),
             color = color_statutory, linewidth = 0.7) +
-  # Actual: monthly scatter
   geom_point(data = actual_etr %>% filter(date >= "2025-01-01"),
              aes(x = date, y = actual_rate * 100),
              color = color_actual, size = 3, shape = 16) +
-  # Policy event lines
   geom_vline(data = POLICY_EVENTS %>% filter(date <= max(daily_statutory$date)),
              aes(xintercept = date), linetype = "dashed",
              color = tbl_gray, linewidth = 0.3) +
   geom_text(data = POLICY_EVENTS %>% filter(date <= max(daily_statutory$date)),
             aes(x = date, y = Inf, label = label),
             vjust = 1.3, hjust = -0.05, size = 2.3, color = tbl_gray) +
-  # Legend annotations
   annotate("text", x = as.Date("2025-01-15"), y = max(daily_statutory$weighted_etr * 100) * 0.95,
            label = "Statutory (daily)", color = color_statutory, hjust = 0, fontface = "bold") +
   annotate("text", x = as.Date("2025-01-15"), y = max(daily_statutory$weighted_etr * 100) * 0.88,
@@ -185,8 +232,7 @@ ggplot() +
   labs(
     title = fig_meta("F1", "title"),
     subtitle = fig_meta("F1", "subtitle"),
-    x = NULL,
-    y = fig_meta("F1", "y_label"),
+    x = NULL, y = fig_meta("F1", "y_label"),
     caption = fig_caption("F1")
   ) +
   scale_y_continuous(labels = percent_format(scale = 1)) +
@@ -198,41 +244,36 @@ ggplot() +
 ## Figure 2: The Statutory-Actual Gap
 
 ```{r fig-gap}
-comparison %>%
-  filter(!is.na(gap_pp)) %>%
+gap_data <- comparison %>% filter(!is.na(gap_pp))
+
+gap_data %>%
   ggplot(aes(x = date, y = gap_pp)) +
   geom_col(fill = color_gap, alpha = 0.8) +
   geom_hline(yintercept = 0, color = "black") +
   geom_text(aes(label = sprintf("%.1f pp", gap_pp)),
-            vjust = ifelse(comparison$gap_pp[!is.na(comparison$gap_pp)] >= 0, -0.5, 1.5),
+            vjust = ifelse(gap_data$gap_pp >= 0, -0.5, 1.5),
             size = 3) +
   labs(
     title = fig_meta("F2", "title"),
     subtitle = fig_meta("F2", "subtitle"),
-    x = NULL,
-    y = fig_meta("F2", "y_label"),
+    x = NULL, y = fig_meta("F2", "y_label"),
     caption = fig_caption("F2")
   )
 ```
 
 The gap between statutory and actual rates is expected to be positive for several structural reasons:
 
-1. **Collection timing**: Tariffs are assessed at entry but may be collected weeks or months later. Monthly revenue data reflects a blend of tariff schedules in effect at the time of import.
-2. **USMCA utilization**: Products qualifying under USMCA enter duty-free, but our statutory calculation uses a binary S/S+ flag from HTS rather than actual utilization rates (median ~50% for CA/MX products).
-3. **Duty drawback and refunds**: Some collected duties are later refunded through drawback programs.
-4. **Preferential programs**: GSP, FTAs, and other preference programs reduce effective rates below MFN schedules.
-5. **De minimis threshold**: Shipments below $800 enter duty-free (though this was reduced for some countries in 2025).
+1. **Collection timing**: Tariffs are assessed at entry but may be collected weeks or months later.
+2. **USMCA utilization**: Our statutory model assumes 100% utilization for eligible products; actual utilization is ~50%.
+3. **Duty drawback and refunds**: Some collected duties are later refunded.
+4. **Preferential programs**: GSP, FTAs, and other preference programs reduce effective rates.
+5. **De minimis threshold**: Shipments below $800 enter duty-free.
 
 ---
 
 ## Collapsing Statutory Rates to Monthly
 
-We collapse the daily statutory ETR to monthly using **first-of-month snapshots**. This approach is preferable to monthly averaging because:
-
-- Tariff rates are step functions---they change only at discrete policy revision dates, not gradually. Averaging would create artificial intermediate values that never actually applied.
-- Most tariff revisions take effect on or near the 1st of the month, so the first-of-month snapshot captures the prevailing rate for most of the month.
-- Census reports monthly import values without within-month timing, so there's no additional precision gained from day-weighting.
-- It's transparent and easy to interpret: "what was the tariff schedule at month start?"
+We collapse the daily statutory ETR to monthly using **first-of-month snapshots**. Tariff rates are step functions that change only at discrete policy revision dates. Averaging would create artificial intermediate values. The first-of-month snapshot aligns with Census monthly reporting and is easy to interpret.
 
 ```{r tbl-monthly-comparison}
 comparison %>%
@@ -251,103 +292,286 @@ comparison %>%
 
 ---
 
-## Country-Level Decomposition
+## Import Volumes by Trading Partner
 
-```{r load-country-data, include=FALSE}
-# Load statutory ETR by partner from the tariff-rate-tracker
-etr_partner_file <- file.path(TRACKER_DIR, "output", "daily", "daily_by_country.csv")
-etr_partner_available <- file.exists(etr_partner_file)
-
-if (etr_partner_available) {
-  daily_country <- read_csv(etr_partner_file, show_col_types = FALSE) %>%
-    mutate(date = as.Date(date))
-
-  # Define major partners for display
-  MAJOR_PARTNERS <- c("China", "Canada", "Mexico", "EU", "Japan", "S. Korea", "UK")
-
-  # Collapse to monthly first-of-month
-  monthly_country <- daily_country %>%
-    filter(day(date) == 1, date >= "2025-01-01") %>%
-    mutate(
-      partner_group = case_when(
-        country_name %in% c("China") ~ "China",
-        country_name %in% c("Canada") ~ "Canada",
-        country_name %in% c("Mexico") ~ "Mexico",
-        country_name %in% c("Japan") ~ "Japan",
-        country_name %in% c("Korea, South", "South Korea") ~ "S. Korea",
-        country_name %in% c("United Kingdom") ~ "UK",
-        # EU detection would need country list; placeholder
-        TRUE ~ "ROW"
-      )
-    )
-}
-```
-
-```{r fig-country-etr, eval=etr_partner_available}
-# Show top trading partners' statutory ETR over time
-top_partners <- monthly_country %>%
-  filter(partner_group %in% MAJOR_PARTNERS) %>%
+```{r fig-partner-imports, eval=census_available}
+# Aggregate Census data to monthly by partner group
+partner_monthly <- census %>%
   group_by(date, partner_group) %>%
   summarize(
-    weighted_etr = weighted.mean(weighted_etr, w = pmax(n_products_present, 1), na.rm = TRUE),
+    imports_B = sum(con_val_mo, na.rm = TRUE) / 1e9,
     .groups = "drop"
-  )
+  ) %>%
+  filter(date >= "2024-01-01", date <= Sys.Date())
 
-top_partners %>%
-  ggplot(aes(x = date, y = weighted_etr * 100, color = partner_group)) +
-  geom_step(linewidth = 0.8) +
+# Focus on major partners
+major <- c("China", "Canada", "Mexico", "EU", "Japan", "S. Korea", "UK")
+partner_major <- partner_monthly %>%
+  filter(partner_group %in% major)
+
+partner_major %>%
+  ggplot(aes(x = date, y = imports_B, color = partner_group)) +
+  geom_line(linewidth = 0.7) +
+  geom_vline(xintercept = as.Date("2025-01-01"), linetype = "dashed", color = tbl_gray) +
   scale_color_manual(values = PARTNER_COLORS) +
   labs(
     title = fig_meta("F3", "title"),
     subtitle = fig_meta("F3", "subtitle"),
-    x = NULL,
-    y = fig_meta("F3", "y_label"),
+    x = NULL, y = fig_meta("F3", "y_label"),
     color = NULL,
     caption = fig_caption("F3")
+  )
+```
+
+```{r fig-partner-imports-na, eval=!census_available, results='asis'}
+cat("*Census trade data not available. Run R/01_pull_census_trade.R first.*")
+```
+
+---
+
+## Stockpiling Analysis
+
+### Import Surge vs. Tariff Increase by Chapter
+
+The stockpiling hypothesis predicts that chapters facing larger tariff increases should show larger pre-tariff import surges. We test this by comparing Q1 2025 year-over-year import growth against the statutory tariff increase from baseline to current policy.
+
+```{r fig-stockpiling-scatter, eval=census_available && ts_available, fig.height=7}
+# Compute Q1 2025 vs Q1 2024 import growth by chapter
+q1_2025 <- census %>%
+  filter(year == 2025, month %in% 1:3) %>%
+  group_by(hs2) %>%
+  summarize(imports_q1_2025 = sum(con_val_mo, na.rm = TRUE), .groups = "drop")
+
+q1_2024 <- census %>%
+  filter(year == 2024, month %in% 1:3) %>%
+  group_by(hs2) %>%
+  summarize(imports_q1_2024 = sum(con_val_mo, na.rm = TRUE), .groups = "drop")
+
+import_growth <- q1_2025 %>%
+  inner_join(q1_2024, by = "hs2") %>%
+  mutate(yoy_growth = (imports_q1_2025 / imports_q1_2024 - 1) * 100) %>%
+  filter(is.finite(yoy_growth))
+
+# Merge with tariff increase
+rate_change <- chapter_summary %>%
+  left_join(baseline_by_ch, by = "hs2") %>%
+  mutate(rate_increase_pp = (mean_total - baseline_rate) * 100)
+
+stockpile_data <- import_growth %>%
+  inner_join(rate_change %>% select(hs2, rate_increase_pp, n_products), by = "hs2") %>%
+  mutate(imports_B = imports_q1_2025 / 1e9)
+
+# Scatter: tariff increase vs import surge
+p_scatter <- stockpile_data %>%
+  filter(rate_increase_pp > 0.5) %>%
+  ggplot(aes(x = rate_increase_pp, y = yoy_growth, size = imports_B)) +
+  geom_point(color = color_statutory, alpha = 0.6) +
+  geom_text(aes(label = hs2), hjust = -0.3, vjust = 0.5, size = 2.5, color = tbl_gray) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = tbl_gray) +
+  geom_smooth(method = "lm", se = TRUE, color = color_actual, linewidth = 0.8) +
+  scale_size_continuous(range = c(1, 8), labels = dollar_format(prefix = "$", suffix = "B")) +
+  labs(
+    title = fig_meta("F4", "title"),
+    subtitle = fig_meta("F4", "subtitle"),
+    x = "Tariff Increase from Jan 2025 Baseline (pp)",
+    y = fig_meta("F4", "y_label"),
+    size = "Q1 2025 Imports",
+    caption = fig_caption("F4")
+  )
+
+# Top 15 chapters by import growth, conditional on tariff increase
+p_bar <- stockpile_data %>%
+  filter(rate_increase_pp > 2) %>%
+  arrange(desc(yoy_growth)) %>%
+  head(15) %>%
+  ggplot(aes(x = reorder(hs2, yoy_growth), y = yoy_growth)) +
+  geom_col(fill = color_statutory, alpha = 0.8) +
+  geom_hline(yintercept = 0, color = "black") +
+  coord_flip() +
+  labs(
+    title = "Top 15 Chapters: Q1 Import Growth (Tariff-Affected Only)",
+    subtitle = "Among chapters with > 2pp tariff increase",
+    x = "HS Chapter", y = "YoY Import Growth (%)"
+  )
+
+p_scatter / p_bar +
+  plot_annotation(title = "Stockpiling Evidence: Import Surges vs. Tariff Increases")
+```
+
+```{r stockpiling-na, eval=!census_available || !ts_available, results='asis'}
+cat("*Census trade data or statutory timeseries not available.*")
+```
+
+### Monthly Import Dynamics Around Liberation Day
+
+```{r fig-liberation-day, eval=census_available, fig.height=6}
+# Focus on chapters with large IEEPA increases (Liberation Day = April 2)
+# Show monthly import trajectory for top affected chapters
+if (ts_available) {
+  ieepa_chapters <- chapter_summary %>%
+    filter(mean_ieepa > 0.05) %>%  # Chapters with > 5% IEEPA rate
+    arrange(desc(mean_ieepa)) %>%
+    head(8) %>%
+    pull(hs2)
+} else {
+  ieepa_chapters <- c("84", "85", "87", "39", "94", "73", "40", "90")
+}
+
+census %>%
+  filter(hs2 %in% ieepa_chapters, year %in% c(2024, 2025)) %>%
+  group_by(date, hs2) %>%
+  summarize(imports_B = sum(con_val_mo, na.rm = TRUE) / 1e9, .groups = "drop") %>%
+  ggplot(aes(x = date, y = imports_B, color = hs2)) +
+  geom_line(linewidth = 0.6) +
+  geom_vline(xintercept = as.Date("2025-04-02"), linetype = "dashed", color = "red") +
+  annotate("text", x = as.Date("2025-04-02"), y = Inf, label = "Liberation Day",
+           vjust = 1.5, hjust = -0.1, size = 3, color = "red") +
+  geom_vline(xintercept = as.Date("2025-01-01"), linetype = "dashed", color = tbl_gray) +
+  labs(
+    title = "Monthly Imports for IEEPA-Affected Chapters",
+    subtitle = "Top chapters by IEEPA reciprocal rate; note pre-April surge and post-April dip",
+    x = NULL, y = "Billions USD", color = "HS Chapter",
+    caption = "Source: Census Bureau International Trade API"
+  )
+```
+
+---
+
+## Transshipment Analysis
+
+```{r fig-transshipment, eval=census_available, fig.height=7}
+# Compare China import decline vs SE Asian import growth
+# Census codes: China=5700, Vietnam=5520, Thailand=5490, Malaysia=5570, Cambodia=5550
+transship_ctys <- c("5700", "5520", "5490", "5570", "5550")
+transship_names <- c("5700" = "China", "5520" = "Vietnam", "5490" = "Thailand",
+                     "5570" = "Malaysia", "5550" = "Cambodia")
+
+transship_data <- census %>%
+  filter(cty_code %in% transship_ctys) %>%
+  mutate(country = transship_names[cty_code]) %>%
+  group_by(date, country) %>%
+  summarize(imports_B = sum(con_val_mo, na.rm = TRUE) / 1e9, .groups = "drop") %>%
+  filter(date >= "2024-01-01", date <= Sys.Date())
+
+# Compute China share vs SE Asian share over time
+total_by_month <- census %>%
+  group_by(date) %>%
+  summarize(total_imports = sum(con_val_mo, na.rm = TRUE), .groups = "drop")
+
+share_data <- census %>%
+  filter(cty_code %in% transship_ctys) %>%
+  mutate(country = transship_names[cty_code]) %>%
+  group_by(date, country) %>%
+  summarize(imports = sum(con_val_mo, na.rm = TRUE), .groups = "drop") %>%
+  left_join(total_by_month, by = "date") %>%
+  mutate(share = imports / total_imports * 100) %>%
+  filter(date >= "2024-01-01", date <= Sys.Date())
+
+transship_colors <- c("China" = "#C8102E", "Vietnam" = "#28A745",
+                      "Thailand" = "#FFC107", "Malaysia" = "#0055A4",
+                      "Cambodia" = "#9B59B6")
+
+p_level <- transship_data %>%
+  ggplot(aes(x = date, y = imports_B, color = country)) +
+  geom_line(linewidth = 0.7) +
+  geom_vline(xintercept = as.Date("2025-01-01"), linetype = "dashed", color = tbl_gray) +
+  scale_color_manual(values = transship_colors) +
+  labs(title = "Import Levels: China vs. SE Asian Transshipment Countries",
+       x = NULL, y = "Billions USD", color = NULL)
+
+p_share <- share_data %>%
+  ggplot(aes(x = date, y = share, color = country)) +
+  geom_line(linewidth = 0.7) +
+  geom_vline(xintercept = as.Date("2025-01-01"), linetype = "dashed", color = tbl_gray) +
+  scale_color_manual(values = transship_colors) +
+  labs(title = "Import Share: China vs. SE Asian Transshipment Countries",
+       subtitle = "Share of total U.S. goods imports (%)",
+       x = NULL, y = "Share of Total Imports (%)", color = NULL,
+       caption = fig_caption("F5"))
+
+p_level / p_share
+```
+
+```{r transship-na, eval=!census_available, results='asis'}
+cat("*Census trade data not available.*")
+```
+
+---
+
+## Chapter-Level Effective Rates (Census Calculated Duty)
+
+The Census Bureau reports "calculated duty" at the chapter × country × month level. This represents the statutory duty amount before preference programs (USMCA, GSP, FTAs) are applied. Comparing this against actual Treasury collections gives a measure of total preference utilization.
+
+```{r fig-chapter-etr, eval=census_available}
+# Top 10 chapters by 2025 import value
+top_chapters <- census %>%
+  filter(year == 2025) %>%
+  group_by(hs2) %>%
+  summarize(total_imports = sum(con_val_mo, na.rm = TRUE), .groups = "drop") %>%
+  arrange(desc(total_imports)) %>%
+  head(10) %>%
+  pull(hs2)
+
+census %>%
+  filter(hs2 %in% top_chapters, year %in% c(2024, 2025)) %>%
+  group_by(date, hs2) %>%
+  summarize(
+    imports = sum(con_val_mo, na.rm = TRUE),
+    duties = sum(dut_val_mo, na.rm = TRUE),
+    etr = duties / imports * 100,
+    .groups = "drop"
+  ) %>%
+  filter(is.finite(etr), etr < 200) %>%  # Filter extreme outliers
+  ggplot(aes(x = date, y = etr, color = hs2)) +
+  geom_line(linewidth = 0.6) +
+  geom_vline(xintercept = as.Date("2025-01-01"), linetype = "dashed", color = tbl_gray) +
+  labs(
+    title = fig_meta("F6", "title"),
+    subtitle = fig_meta("F6", "subtitle"),
+    x = NULL, y = fig_meta("F6", "y_label"),
+    color = "HS Chapter",
+    caption = fig_caption("F6")
   ) +
   scale_y_continuous(labels = percent_format(scale = 1))
 ```
 
-```{r country-etr-na, eval=!etr_partner_available, results='asis'}
-cat("*Country-level daily ETR data not available.*")
+```{r tbl-chapter-etr, eval=census_available}
+# Summary table: 2024 vs 2025 calculated ETR by chapter
+chapter_etr_comparison <- census %>%
+  filter(year %in% c(2024, 2025)) %>%
+  group_by(year, hs2) %>%
+  summarize(
+    imports_B = sum(con_val_mo, na.rm = TRUE) / 1e9,
+    duties_B = sum(dut_val_mo, na.rm = TRUE) / 1e9,
+    calc_etr = duties_B / imports_B * 100,
+    .groups = "drop"
+  ) %>%
+  filter(hs2 %in% top_chapters) %>%
+  select(year, hs2, imports_B, calc_etr) %>%
+  pivot_wider(names_from = year, values_from = c(imports_B, calc_etr),
+              names_sep = "_")
+
+chapter_etr_comparison %>%
+  mutate(
+    `HS Chapter` = hs2,
+    `2024 Imports ($B)` = sprintf("%.1f", imports_B_2024),
+    `2025 Imports ($B)` = sprintf("%.1f", imports_B_2025),
+    `2024 Calc. ETR (%)` = sprintf("%.1f", calc_etr_2024),
+    `2025 Calc. ETR (%)` = sprintf("%.1f", calc_etr_2025),
+    `ETR Change (pp)` = sprintf("%.1f", calc_etr_2025 - calc_etr_2024)
+  ) %>%
+  select(`HS Chapter`, `2024 Imports ($B)`, `2025 Imports ($B)`,
+         `2024 Calc. ETR (%)`, `2025 Calc. ETR (%)`, `ETR Change (pp)`) %>%
+  kable(caption = "Census Calculated ETR by Chapter: 2024 vs. 2025 (Top 10 by Import Value)",
+        align = c("l", "r", "r", "r", "r", "r")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
 ```
-
-A key limitation of the country-level comparison is that we do not have country-level *actual* collection data from Treasury. The actual ETR from Haver is an aggregate across all trading partners. Country-level actual rates could in principle be derived from Census IM145/IM148 microdata (which reports duties collected by HTS line item), but this data has significant lags and is not yet available for the full 2025 period.
-
-**Proposed approach for country-level gap analysis**: Use the product-level timeseries RDS to compute *expected* revenue by country (statutory rate $\times$ 2024 import value), then compare against the aggregate actual revenue. Countries with a larger share of total expected revenue but a smaller share of actual collections would indicate disproportionate avoidance or USMCA utilization. This is the approach we develop in the [product-level analysis](#product-level-analysis) below.
 
 ---
 
-## Product-Level Analysis {#product-level-analysis}
+## Product-Level Statutory Rates
 
-```{r load-product-data, include=FALSE}
-# Load the full timeseries for product-level analysis
-# This is a large object (~50M+ rows across revisions); we load it once and filter
-ts_available <- file.exists(file.path(TRACKER_DIR, "data", "timeseries", "rate_timeseries.rds"))
-if (ts_available) {
-  ts <- load_timeseries()
-
-  # Get the latest snapshot
-  latest_date <- min(Sys.Date(), max(ts$valid_until, na.rm = TRUE))
-  current_rates <- get_rates_at_date(ts, latest_date)
-
-  # Summarize by HS2 chapter
-  chapter_summary <- current_rates %>%
-    mutate(hs2 = substr(hts10, 1, 2)) %>%
-    group_by(hs2) %>%
-    summarize(
-      n_products = n_distinct(hts10),
-      mean_total = mean(total_rate, na.rm = TRUE),
-      mean_232 = mean(rate_232, na.rm = TRUE),
-      mean_301 = mean(rate_301, na.rm = TRUE),
-      mean_ieepa = mean(rate_ieepa_recip, na.rm = TRUE),
-      .groups = "drop"
-    ) %>%
-    arrange(desc(mean_total))
-}
-```
-
-```{r tbl-chapter-rates, eval=ts_available}
+```{r tbl-chapter-statutory, eval=ts_available}
 chapter_summary %>%
   head(20) %>%
   mutate(
@@ -367,87 +591,11 @@ chapter_summary %>%
 
 ---
 
-## Explaining the Gap: Avoidance, Evasion, and Stockpiling
-
-The statutory-actual gap reflects a mix of legitimate and illegitimate factors. We consider three main channels:
-
-### 1. Stockpiling / Front-Running
-
-Importers who anticipate tariff increases have strong incentives to accelerate shipments before effective dates. This creates:
-
-- A **pre-tariff import surge**: imports spike in the weeks before a tariff takes effect, entering at the lower (or zero) pre-tariff rate
-- A **post-tariff import dip**: imports fall as inventories are drawn down
-- A **persistent gap**: during the drawdown period, actual collections lag statutory rates because the goods entering consumption were imported (and taxed) under the old regime
-
-We can test this by examining whether HS chapters that saw the largest tariff increases also experienced the most pronounced import timing shifts. The tariff-impact-tracker's trade deviation analysis (Figures 14--15) documents the aggregate pattern of front-running; here we extend it to the product level.
-
-```{r fig-stockpiling-concept, eval=ts_available, fig.height=7}
-# Conceptual figure: compare rate changes vs import timing by chapter
-# For each HS2, compute (a) the tariff increase from basic to current,
-# (b) how much of total imports that chapter represents
-
-baseline_rates <- get_rates_at_date(ts, "2025-01-01")
-baseline_by_ch <- baseline_rates %>%
-  mutate(hs2 = substr(hts10, 1, 2)) %>%
-  group_by(hs2) %>%
-  summarize(baseline_rate = mean(total_rate, na.rm = TRUE), .groups = "drop")
-
-rate_change <- chapter_summary %>%
-  left_join(baseline_by_ch, by = "hs2") %>%
-  mutate(
-    rate_increase = mean_total - baseline_rate,
-    rate_increase_pp = rate_increase * 100
-  ) %>%
-  filter(rate_increase_pp > 1)  # Focus on chapters with meaningful increases
-
-p1 <- rate_change %>%
-  ggplot(aes(x = reorder(hs2, rate_increase_pp), y = rate_increase_pp)) +
-  geom_col(fill = color_statutory, alpha = 0.8) +
-  coord_flip() +
-  labs(
-    title = "Tariff Increase by HS Chapter",
-    subtitle = "Increase in mean statutory rate from Jan 2025 baseline to current policy (pp)",
-    x = "HS Chapter",
-    y = "Rate Increase (pp)"
-  )
-
-p2 <- rate_change %>%
-  ggplot(aes(x = rate_increase_pp, y = n_products)) +
-  geom_point(color = color_actual, size = 2) +
-  geom_text(aes(label = hs2), hjust = -0.2, size = 2.5) +
-  labs(
-    title = "Rate Increase vs. Product Count",
-    subtitle = "Chapters with more products may show more aggregate avoidance",
-    x = "Rate Increase (pp)",
-    y = "Number of HTS10 Products"
-  )
-
-p1 / p2 +
-  plot_annotation(
-    title = fig_meta("F4", "title"),
-    caption = fig_caption("F4")
-  )
-```
-
-**Proposed extension**: With monthly Census import data by HS chapter (available from Census USA Trade Online or USITC DataWeb), we could compute:
-
-$$\text{Stockpiling Index}_c = \frac{\text{Imports}_{c,\text{pre-tariff}}}{\text{Imports}_{c,\text{same period prior year}}}$$
-
-for each chapter $c$, where the pre-tariff window is the 1--3 months before the tariff effective date. Chapters with a high stockpiling index and a large tariff increase would be expected to show a larger statutory-actual gap in subsequent months as the pre-tariff inventory clears.
-
-### 2. USMCA Utilization
-
-A significant portion of the statutory-actual gap is likely attributable to USMCA. Our statutory rate calculation uses binary S/S+ eligibility flags from the HTS `special` field to identify USMCA-eligible products, but actual USMCA utilization rates are considerably lower---median around 50% for Canadian and Mexican products. This means:
-
-- We assume 100% USMCA utilization for eligible products (rate = 0 on those product-country pairs)
-- In reality, only ~50% of eligible trade actually claims USMCA preferences
-- The remaining 50% pays the full tariff rate
-- This should make statutory rates *lower* than actual for CA/MX products, partially offsetting the gap from other factors
+## USMCA Utilization
 
 ```{r tbl-usmca-stats, eval=ts_available}
-# Count USMCA-eligible products
 usmca_stats <- current_rates %>%
-  filter(country %in% c("1220", "2010")) %>%  # Canada, Mexico census codes
+  filter(country %in% c("1220", "2010")) %>%
   summarize(
     total_pairs = n(),
     usmca_eligible = sum(usmca_eligible, na.rm = TRUE),
@@ -474,28 +622,13 @@ tibble(
   kable_styling(bootstrap_options = c("striped"), full_width = FALSE)
 ```
 
-### 3. Tariff Evasion and Misclassification
-
-Tariff evasion---intentional misclassification of products to lower-tariff HTS codes, undervaluation of declared import values, or transshipment through third countries---is harder to detect from aggregate data but likely contributes to the gap, particularly for:
-
-- **China-origin goods**: The large IEEPA + 301 surcharges create strong incentives for transshipment through Southeast Asian countries
-- **Steel/aluminum derivatives**: Section 232 derivative product identification relies on metal content shares that importers may underreport
-- **De minimis exploitation**: Small shipments that avoid duties entirely (though the $800 threshold was tightened in 2025)
-
-**Proposed diagnostic**: Compare the growth in imports from countries commonly used as transshipment points (Vietnam, Thailand, Malaysia, Cambodia) against the decline in Chinese imports. If transshipment is significant, we would expect:
-
-$$\frac{\Delta \text{Imports}_{\text{Vietnam}}}{\Delta \text{Imports}_{\text{China}}} \approx -1$$
-
-for products with high China-specific tariffs (301 + IEEPA).
+Our statutory model assumes 100% USMCA utilization for eligible products, but actual utilization is ~50%. This means our statutory rates for CA/MX are *too low*, partially **narrowing** the gap. The USMCA effect thus works in the opposite direction from most other factors.
 
 ---
 
 ## Framework for Decomposing the Gap
 
 ```{r fig-decomposition, fig.height=6}
-# Illustrative decomposition (placeholder values -- to be estimated from data)
-# The goal is to show the framework; actual estimation requires additional data
-
 decomp <- tibble(
   factor = c("Collection timing lag",
              "USMCA utilization gap",
@@ -515,32 +648,29 @@ decomp %>%
   scale_fill_manual(values = c("Widens gap" = color_gap, "Narrows gap" = color_actual)) +
   geom_hline(yintercept = 0, color = "black") +
   labs(
-    title = fig_meta("F5", "title"),
-    subtitle = fig_meta("F5", "subtitle"),
-    x = NULL,
-    y = fig_meta("F5", "y_label"),
+    title = fig_meta("F7", "title"),
+    subtitle = fig_meta("F7", "subtitle"),
+    x = NULL, y = fig_meta("F7", "y_label"),
     fill = NULL,
-    caption = fig_caption("F5")
+    caption = fig_caption("F7")
   )
 ```
 
-*Note: The decomposition values shown above are illustrative placeholders. Estimation of each channel requires additional data and analysis described in the [Next Steps](#next-steps) section.*
+*Note: The decomposition values shown above are illustrative placeholders. Calibration using the Census chapter-level data is a next step.*
 
 ---
 
 ## Next Steps {#next-steps}
 
-1. **Monthly Census trade data by HS chapter**: Pull from Census USA Trade Online or USITC DataWeb to construct product-level stockpiling indices and test the correlation between tariff increases and import timing shifts.
+1. **Calibrate Census calculated duty**: Investigate why `DUT_VAL_MO` diverges so far from actual collections (specific rate treatment, preference pre-application, HMT/MPF inclusion).
 
-2. **Country-level duties collected**: Investigate IM145/IM148 microdata availability for country-level actual tariff collection, which would allow a direct actual-vs-statutory comparison by partner.
+2. **Country-level gap analysis**: Using HS2 × country Census data, compute expected vs. actual duty by partner to attribute the gap.
 
-3. **Transshipment analysis**: Decompose the growth in imports from Vietnam, Thailand, Malaysia, and Cambodia by HS chapter and compare against the decline from China.
+3. **Dynamic stockpiling model**: Estimate the timing of inventory drawdown after each tariff escalation step using a distributed lag model on monthly trade by chapter.
 
-4. **USMCA utilization rates**: Obtain actual USMCA claim rates from CBP data (published with a lag) to calibrate the USMCA portion of the gap decomposition.
+4. **USMCA utilization calibration**: Obtain actual USMCA claim rates from CBP data to refine the USMCA contribution estimate.
 
-5. **Dynamic stockpiling model**: Estimate the timing of inventory drawdown after each tariff escalation step, potentially using a distributed lag model on monthly trade by chapter.
-
-6. **Reconciliation with tariff-impact-tracker trade figures**: Align the import surge patterns documented in Figures 14--15 of the tariff effects tracker with the product-level gap analysis here.
+5. **Transshipment quantification**: Estimate the share of SE Asian import growth attributable to China trade diversion vs. organic growth.
 
 ---
 
