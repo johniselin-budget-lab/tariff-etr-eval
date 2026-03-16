@@ -1,0 +1,21 @@
+# R
+.Rhistory
+.Rdata
+.RData
+.Ruserdata
+.Rproj.user/
+
+# Output (regenerated)
+output/*.csv
+output/*.html
+output/*.docx
+output/*.xlsx
+output/*.png
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+*.swp
