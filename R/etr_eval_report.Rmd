@@ -10,6 +10,7 @@ output:
     code_folding: hide
   word_document:
     toc: false
+always_allow_html: true
 ---
 
 ```{r setup, include=FALSE}
