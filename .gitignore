@@ -6,11 +6,11 @@
 .Rproj.user/
 
 # Output (regenerated)
-output/*.csv
 output/*.html
 output/*.docx
 output/*.xlsx
 output/*.png
+output/*_files/
 
 # OS
 .DS_Store
