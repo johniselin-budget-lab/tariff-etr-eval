@@ -14,7 +14,7 @@ The pipeline is **pure R**, structured like the sibling production repo [`tariff
 00_run_all.R                      orchestrator (logs to logs/run_all_*.log)
 ├── 01a  code/01a_pull_raw_data.R       raw data pull (on demand; ~30–60 min)
 ├── 01b  code/01b_build_panel.R         data/raw CSVs -> data/processed/panel.rds
-├── 02a  code/02a_ladder.R              tiers S0–S4 + T, channel gaps, strips
+├── 02a  code/02a_ladder.R              tiers S1–S4 + T, channel gaps, strips
 ├── 02b  code/02b_decomposition.R       Shapley diversion + attributions + cmp_*
 ├── 02c  code/02c_vmr.R                 value-misreporting decomposition
 ├── 03a  code/03a_figures_framework.R   framework + VMR figures
