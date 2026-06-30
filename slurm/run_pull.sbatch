@@ -14,12 +14,11 @@
 # Publish mode (default): snapshots + daily ETRs + h2avg counterfactual come
 # from the shared tracker publish (config/local_paths.yaml tracker_data_dir);
 # IMDB HS10 bulk is downloaded/parsed from Census; Treasury revenue from the
-# vendored resources/treasury_revenue.csv. Produces the publish-mode S1-S4+T
-# inputs in data/raw/ (S0 / usmca_monthly need a DataWeb token and are skipped).
+# vendored resources/treasury_revenue.csv. Produces the S1-S4+T inputs in
+# data/raw/; 2024 import weights also come from the publish.
 #
 # Time/mem: IMDB download+parse for ~17 months dominates (memory-heavy, ~10-20GB
-# peak); the 2024 import-weight self-build adds ~10-30 min if no RDS is cached.
-# Network-bound otherwise. First pass can be several hours; cached reruns faster.
+# peak). Network-bound otherwise. First pass can be several hours; cached reruns faster.
 #
 # Progress: tail -f logs/pull_raw_data_<date>.log   (the R script's own log)
 
@@ -45,7 +44,8 @@ Rscript -e 'q(status = !requireNamespace("arrow", quietly=TRUE))' \
 echo "[pull] start $(date)"
 
 # Default flags = publish mode + IMDB + counterfactual + Treasury.
-# Add --refresh-tracker only with a DataWeb token (rebuilds USMCA scenarios / S0).
+# Add --refresh-tracker only with a DataWeb token (rebuilds tracker data;
+# expects the restructured-tracker sibling layout).
 Rscript code/01a_pull_raw_data.R
 
 echo "[pull] done $(date)"

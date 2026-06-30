@@ -6,6 +6,8 @@
 
 **Status**: Draft outline post-framework-restructure (April 2026).
 
+> **Update (2026-06-30): S0 removed from the pipeline.** The implemented ladder is **S1 → S2 → S3 → S4 → T**. References below to an S0 tier / `rate_2024` / the USMCA-adjustment (S0→S1) channel describe the earlier six-tier design and are no longer computed — treat them as deprecated when lifting numbers into the draft.
+
 **Companion documents**:
 - `etr_divergence_slides.Rmd` — 10-minute presentation, same structure, less detail
 - `etr-literature-review.md` — full citation library (lift inline references from there)

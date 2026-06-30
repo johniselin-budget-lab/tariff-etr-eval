@@ -32,10 +32,10 @@
 #                                                       # rebuilds the two IMDB
 #                                                       # CSVs from cached ZIPs)
 #   Rscript code/01a_pull_raw_data.R --only-tracker    # sections 3a-3e only
-#   Rscript code/01a_pull_raw_data.R --only-counterfactual  # sections 3d-3e only
+#   Rscript code/01a_pull_raw_data.R --only-counterfactual  # section 3e only
 #   Rscript code/01a_pull_raw_data.R --refresh-tracker # rebuild tracker data
 #                                                       # (snapshots, daily ETR,
-#                                                       # USMCA shares, scenarios)
+#                                                       # USMCA DataWeb shares)
 #                                                       # before the export steps;
 #                                                       # ~60-90 min, requires
 #                                                       # DATAWEB_API_TOKEN env var.
@@ -56,17 +56,11 @@
 #   imdb_hs10_country_monthly.csv       -- HS10 x country x month (aggregated)
 #   census_hs10_fallback.csv            -- HS10 x country x month (API, gap months)
 #   snapshot_rates/snapshot_{rev}.csv   -- statutory rates per revision (production)
-#   snapshot_rates/<scenario>/snapshot_{rev}.csv -- per-USMCA-scenario rates
-#       (scenarios: usmca_none, usmca_2024, usmca_monthly, usmca_h2avg)
 #   import_weights_2024.csv             -- 2024 annual import weights
 #   daily_overall.csv                   -- daily statutory ETR
 #   daily_by_country.csv                -- daily ETR by country
 #   revision_dates.csv                  -- revision effective dates
 #   tariff_revenue.csv                  -- actual monthly ETR
-#   usmca_shares/usmca_product_shares_*.csv -- USMCA utilization shares (diagnostic)
-#   counterfactual_usmca_none.csv       -- HS10 x country x month (0% USMCA)
-#   counterfactual_usmca2024.csv        -- HS10 x country x month (USMCA 2024 baseline; S0)
-#   counterfactual_usmca_monthly.csv    -- HS10 x country x month (monthly USMCA empirical)
 #   counterfactual_h2avg.csv            -- HS10 x country x month (Post-July 2025 USMCA; S1/S2)
 #   imdb_other_pref_shares_monthly.csv  -- HS10 x country x month preference shares
 #   counterfactual_other_pref_delta_monthly.csv -- HS10 x country x month
@@ -244,9 +238,9 @@ if ("--refresh-tracker" %in% cli_args) {
 #   3. TRACKER_DATA_DIR       (env var)
 #   4. tracker_data_dir from config/local_paths.yaml, if it exists
 #   5. sibling checkout only  (original behavior)
-# Sections 3b/3d/3e (import weights, USMCA shares, scenario snapshots) are
-# not yet in the publish and still need the sibling checkout -- see
-# docs/shared_publish_extensions.md for the requested additions.
+# The publish now carries everything the pipeline consumes: top-level snapshots
+# (3a), daily ETR (3c), and 2024 import weights (3b). The sibling checkout is
+# needed only to rebuild tracker data via --refresh-tracker.
 TRACKER_DATA_DIR <- NULL
 td_flag <- grep("^--tracker-data=", cli_args, value = TRUE)
 if (length(td_flag) > 0) {
@@ -328,11 +322,14 @@ if (USE_SHARED_TRACKER) {
 #   - config/revision_dates.csv (appends new USITC releases — manual review
 #     of policy_effective_date may still be required)
 #   - data/hts_archives/*.json  (downloads any missing HTS revisions)
-#   - resources/usmca_product_shares_{2025,2026}*.csv (DataWeb pulls)
+#   - resources/usmca_product_shares_{2025,2026}*.csv (DataWeb pulls; feed the
+#     tracker's own production USMCA rates)
 #   - data/timeseries/snapshot_*.rds (top-level production)
 #   - output/daily/daily_overall.csv, daily_by_country.csv
-#   - data/timeseries/{usmca_none,usmca_2024,usmca_monthly,usmca_h2avg}/
-#       snapshot_*.rds (per-scenario, depends on top-level)
+#
+# Script paths follow the restructured tracker (src/{pipeline,io,model}/ +
+# tools/); the sibling must be on the restructure-codebase branch (or master
+# once that merges). USMCA-scenario building is no longer run (S0 removed).
 #
 # Runs first so the export steps in sections 3a-3e pick up fresh files.
 # Long-running (~60-90 min) and gated on DATAWEB_API_TOKEN. Aborts the
@@ -358,20 +355,19 @@ if (RUN_REFRESH_TRACKER) {
 
   # Ordered refresh sequence. Each step is (label, script-relative-to-tracker, args...).
   # Order matters: revision dates and HTS JSON feed the build; DataWeb shares
-  # feed the build; build_usmca_scenarios.R reads top-level snapshots.
+  # feed the build's production USMCA rates; the --full build writes the
+  # top-level snapshots + daily ETR that sections 3a/3c consume.
   refresh_steps <- list(
     list(label = "01 scrape revision dates",
-         args  = c("src/01_scrape_revision_dates.R")),
+         args  = c("src/pipeline/01_scrape_revision_dates.R")),
     list(label = "02 download HTS JSON",
-         args  = c("src/02_download_hts.R")),
+         args  = c("src/pipeline/02_download_hts.R")),
     list(label = "USMCA DataWeb shares (2025, monthly)",
-         args  = c("src/download_usmca_dataweb.R", "--year", "2025", "--monthly")),
+         args  = c("tools/download_usmca_dataweb.R", "--year", "2025", "--monthly")),
     list(label = "USMCA DataWeb shares (2026, monthly)",
-         args  = c("src/download_usmca_dataweb.R", "--year", "2026", "--monthly")),
+         args  = c("tools/download_usmca_dataweb.R", "--year", "2026", "--monthly")),
     list(label = "00 build_timeseries --full (snapshots + daily ETR)",
-         args  = c("src/00_build_timeseries.R", "--full")),
-    list(label = "build_usmca_scenarios (per-scenario subdirs)",
-         args  = c("src/build_usmca_scenarios.R"))
+         args  = c("src/pipeline/00_build_timeseries.R", "--full"))
   )
 
   old_wd <- getwd()
@@ -848,24 +844,30 @@ if (!RUN_TRACKER) {
 
 log_msg("--- 3. Tariff-Rate-Tracker Exports ---")
 
-# --- 3a. Snapshot rate CSVs (RDS -> CSV): top-level + per-scenario ---
+# --- 3a. Snapshot rate CSVs (RDS -> CSV): top-level production ---
 #
-# Top-level snapshots are the production (h2_average) rates. Per-scenario
-# subdirs (usmca_none, usmca_2024, usmca_monthly, usmca_h2avg) contain the
-# same schema built with different USMCA utilization assumptions. Written
-# to data/raw/snapshot_rates/ (top-level) and data/raw/snapshot_rates/<scenario>/.
+# Top-level snapshots are the production (h2_average) rates, written to
+# data/raw/snapshot_rates/. They feed counterfactual_h2avg.csv (S1/S2) and the
+# S2->S3 pref-delta (3g).
 
 ts_dir <- file.path(TRACKER_DIR, "data", "timeseries")
 
 # Columns to export from each snapshot
-SNAP_COLS <- c("hts10", "country", "total_rate",
-               "statutory_rate_232", "statutory_rate_ieepa_recip",
-               "statutory_rate_ieepa_fent", "statutory_rate_301",
-               "statutory_rate_s122", "statutory_rate_section_201",
-               "statutory_rate_other", "statutory_base_rate",
-               "metal_share", "steel_share", "aluminum_share",
-               "copper_share", "usmca_eligible",
-               "s232_usmca_eligible", "rate_232")
+# Only the columns the S1-S4+T ladder + S2->S3 pref-delta actually consume:
+#   total_rate                  -- S1/S2 panel
+#   statutory_base_rate         -- pre-preference base rate (pref delta, 3g)
+#   statutory_rate_ieepa_recip  -- pre-USMCA, pre-stacking reciprocal rate; the
+#       value the 3g delta wants (06_calculate_rates.R captures it before the
+#       USMCA content split + post-MFN floor recompute).
+#   rate_ieepa_recip            -- the NET reciprocal rate after that split/floor.
+#       Exported as the fallback for older vintages whose snapshots predate
+#       statutory_rate_ieepa_recip; NOT interchangeable with it (see 3g).
+# statutory_rate_ieepa_recip is an "extra" column preserved past the tracker's
+# canonical RATE_SCHEMA (enforce_rate_schema keeps extras), so it is present in
+# recent snapshots but absent in older ones -- the intersect()/any_of() guards
+# below export whichever columns each snapshot actually carries.
+SNAP_COLS <- c("hts10", "country", "total_rate", "statutory_base_rate",
+               "statutory_rate_ieepa_recip", "rate_ieepa_recip")
 
 export_snapshots <- function(src_dir, dst_dir, label) {
   dir.create(dst_dir, showWarnings = FALSE, recursive = TRUE)
@@ -950,143 +952,70 @@ if (USE_SHARED_TRACKER) {
   log_msg(sprintf("    -> %d top-level snapshot CSVs written", n_top))
 }
 
-# USMCA scenario snapshots. Since publish vintage 2026-06-10-22 the shared
-# publish carries the USMCA scenario series (scenarios/<scn>/snapshots/
-# valid_from=*/rates.parquet, same revision set as actual/) -- the main ask
-# in docs/shared_publish_extensions.md. Prefer those over a checkout: the
-# framework requires scenario rates from the same engine + vintage as the
-# published production series. Only usmca_2024 (S0) and usmca_monthly
-# (explainer) are consumed; the publish drops usmca_h2avg (== top-level by
-# construction) and usmca_none (not used by the R ladder).
-SCENARIOS <- c("usmca_none", "usmca_2024", "usmca_monthly", "usmca_h2avg")
-PUBLISH_SCENARIOS <- c("usmca_2024", "usmca_monthly")
-if (USE_SHARED_TRACKER) {
-  for (scn in PUBLISH_SCENARIOS) {
-    scn_src <- file.path(TRACKER_DATA_DIR, "scenarios", scn, "snapshots")
-    if (!dir.exists(scn_src)) {
-      log_msg(sprintf("    NOTE: publish carries no '%s' scenario snapshots", scn))
-      log_msg("    (pre-2026-06-10-22 vintage?) -- skipping; ladder degrades to S1-S4 + T.")
-      next
-    }
-    log_msg(sprintf("  Exporting scenario from publish: %s ...", scn))
-    scn_map <- export_snapshots_shared(scn_src, file.path(SNAP_DIR, scn))
-    miss <- setdiff(SHARED_REV_MAP$revision, scn_map$revision)
-    if (length(miss) > 0)
-      log_msg(sprintf("    WARNING: %s lacks %d revision(s) present in actual/: %s",
-                      scn, length(miss), paste(miss, collapse = ", ")))
-    log_msg(sprintf("    -> %d %s snapshot CSVs written", nrow(scn_map), scn))
-  }
-} else if (!HAVE_SIBLING) {
-  log_msg("    WARNING: no shared publish in use and no sibling checkout")
-  log_msg("    found -- skipping scenario exports (see")
-  log_msg("    docs/shared_publish_extensions.md).")
-} else {
-  for (scn in SCENARIOS) {
-    scn_src <- file.path(ts_dir, scn)
-    if (!dir.exists(scn_src)) {
-      log_msg(sprintf("    WARNING: scenario dir '%s' not found -- skipping",
-                      scn))
-      next
-    }
-    scn_dst <- file.path(SNAP_DIR, scn)
-    log_msg(sprintf("  Exporting scenario: %s ...", scn))
-    n_scn <- export_snapshots(scn_src, scn_dst, scn)
-    log_msg(sprintf("    -> %d %s snapshot CSVs written", n_scn, scn))
-  }
-}
+# The S0/USMCA-scenario snapshots (usmca_2024, usmca_monthly, usmca_none,
+# usmca_h2avg) are no longer consumed: the ladder runs S1-S4 + T, and
+# counterfactual_h2avg.csv (S1/S2) is built from the top-level snapshots above.
 
 # --- 3b. 2024 import weights (RDS -> CSV) ---
 
 log_msg("  Exporting 2024 import weights...")
 existing_iw <- file.path(RAW_DIR, "import_weights_2024.csv")
-LOCAL_IW_RDS <- here("data", "weights", "hs10_by_country_gtap_2024_con.rds")
 
-# Resolve a weights RDS, in order: tracker local_paths.yaml ('import_weights'
-# key, if present) -> tracker default weights location -> a previously
-# self-built local copy (see the build fallback below).
-iw_path <- NULL
+# 2024 weights are fixed; resolve them, in order:
+#   1. shared publish weights/import_weights_hs10_country.csv.gz (2024 Census
+#      consumption-value basis; cols hts10, country, imports + year/vintage),
+#   2. the sibling tracker's RDS (post --refresh-tracker sibling runs):
+#      local_paths.yaml 'import_weights' key, else data/weights/...rds,
+#   3. an existing import_weights_2024.csv (weights don't change).
+# Downstream 01b reads hs10, cty_code, imports and renormalizes to w_2024.
+pub_iw <- if (USE_SHARED_TRACKER)
+  file.path(TRACKER_DATA_DIR, "weights", "import_weights_hs10_country.csv.gz") else NA_character_
+
+sib_iw <- NULL
 if (HAVE_SIBLING) {
   lp_path <- file.path(TRACKER_DIR, "config", "local_paths.yaml")
   if (file.exists(lp_path)) {
     iw_rel <- read_yaml(lp_path)$import_weights
     if (!is.null(iw_rel) && length(iw_rel) > 0L && nzchar(iw_rel)) {
       cand <- normalizePath(file.path(TRACKER_DIR, iw_rel), mustWork = FALSE)
-      if (file.exists(cand)) iw_path <- cand
+      if (file.exists(cand)) sib_iw <- cand
     }
   }
-  if (is.null(iw_path)) {
+  if (is.null(sib_iw)) {
     cand <- file.path(TRACKER_DIR, "data", "weights",
                       "hs10_by_country_gtap_2024_con.rds")
-    if (file.exists(cand)) iw_path <- cand
-  }
-}
-if (is.null(iw_path) && file.exists(LOCAL_IW_RDS)) iw_path <- LOCAL_IW_RDS
-
-# Self-build fallback: no prebuilt RDS anywhere (data/weights/ is gitignored
-# in the tracker, so a fresh clone has none). Build via the VENDORED
-# build_import_weights.R + hs10_gtap_crosswalk.csv (copied from the tracker
-# into this repo), so this works in publish mode with no sibling checkout.
-# The build is deterministic from public Census IMDB ZIPs, so the output
-# matches the weights behind the tracker's own daily series (which the
-# S1 = daily-ETR identity depends on). Reuses Section 2's ZIP cache via
-# --raw-dir; any missing 2024 ZIPs are downloaded into it (--keep-zips so the
-# cache survives). Output lands in this repo's data/weights/.
-#
-# The vendored script is preferred; the sibling's copy is used only if the
-# vendored one is somehow missing. All paths are passed explicitly, so the
-# script's here()-based defaults are never relied on.
-if (is.null(iw_path)) {
-  build_script <- here("code", "build_import_weights.R")
-  crosswalk    <- here("resources", "hs10_gtap_crosswalk.csv")
-  if (!file.exists(build_script) && HAVE_SIBLING) {
-    build_script <- file.path(TRACKER_DIR, "src", "build_import_weights.R")
-    crosswalk    <- file.path(TRACKER_DIR, "resources", "hs10_gtap_crosswalk.csv")
-  }
-  if (file.exists(build_script) && file.exists(crosswalk)) {
-    log_msg("    No weights RDS found -- building via build_import_weights.R")
-    log_msg("      script:    ", build_script)
-    log_msg("      crosswalk: ", crosswalk)
-    log_msg("    (downloads any missing 2024 IMDB ZIPs into data/imdb/; ",
-            "~10-30 min)")
-    dir.create(dirname(LOCAL_IW_RDS), showWarnings = FALSE, recursive = TRUE)
-    rscript_bin <- file.path(R.home("bin"),
-                             if (.Platform$OS.type == "windows") "Rscript.exe"
-                             else "Rscript")
-    status <- system2(rscript_bin,
-            args = c(shQuote(build_script),
-                     "--year", "2024",
-                     "--raw-dir", shQuote(IMDB_RAW),
-                     "--crosswalk", shQuote(crosswalk),
-                     "--out", shQuote(LOCAL_IW_RDS),
-                     "--keep-zips"))
-    if (identical(status, 0L) && file.exists(LOCAL_IW_RDS)) {
-      iw_path <- LOCAL_IW_RDS
-      log_msg("    -> weights RDS built at data/weights/")
-    } else {
-      log_msg("    WARNING: weight build failed (exit status ", status, ")")
-    }
-  } else {
-    log_msg("    WARNING: build_import_weights.R or crosswalk not found ",
-            "(looked for vendored copies in code/ + resources/)")
+    if (file.exists(cand)) sib_iw <- cand
   }
 }
 
-if (!is.null(iw_path)) {
-  readRDS(iw_path) |>
+if (!is.na(pub_iw) && file.exists(pub_iw)) {
+  # Aggregate to one row per (hs10, cty_code) before writing -- matches the
+  # sibling-RDS branch below and the publish weights contract (one row per pair;
+  # build_panel_import_weights.R). 01b's w_2024 = imports/sum(imports) keyed on
+  # (hs10, cty_code) assumes uniqueness, so collapse defensively in case a
+  # future publish vintage carries extra partition rows.
+  read_csv(pub_iw, col_types = cols(.default = col_character(),
+                                    imports = col_double()),
+           progress = FALSE) |>
+    transmute(hs10 = hts10, cty_code = country, imports) |>
+    summarise(imports = sum(imports, na.rm = TRUE), .by = c(hs10, cty_code)) |>
+    filter(imports > 0) |>
+    write_csv(existing_iw)
+  log_msg("    -> import_weights_2024.csv (shared publish weights)")
+} else if (!is.null(sib_iw)) {
+  readRDS(sib_iw) |>
     summarise(imports = sum(imports, na.rm = TRUE),
               .by = c(hs10, cty_code)) |>
     filter(imports > 0) |>
     write_csv(existing_iw)
-  log_msg("    -> import_weights_2024.csv written")
+  log_msg("    -> import_weights_2024.csv (sibling weights RDS)")
 } else if (file.exists(existing_iw)) {
-  # 2024 weights are fixed, so a previously exported CSV stays valid.
-  log_msg("    NOTE: no weights RDS available; keeping existing ",
+  log_msg("    NOTE: no publish/sibling weights; keeping existing ",
           "import_weights_2024.csv (2024 weights are fixed).")
 } else {
-  log_msg("    WARNING: no weights RDS and no existing import_weights_2024.csv.")
-  log_msg("    Expected the vendored code/build_import_weights.R + ")
-  log_msg("    resources/hs10_gtap_crosswalk.csv to rebuild weights from Census")
-  log_msg("    IMDB automatically -- check they are present.")
+  stop("No import weights found: expected weights/import_weights_hs10_country.csv.gz",
+       " in the shared publish, a sibling tracker weights RDS, or an existing",
+       " data/raw/import_weights_2024.csv.", call. = FALSE)
 }
 
 # --- 3c. Daily ETR CSVs (copy from tracker output) ---
@@ -1184,76 +1113,18 @@ if (USE_SHARED_TRACKER) {
 
 
 if (!RUN_COUNTERFACTUAL) {
-  log_msg("--- 3d-3e. Counterfactual rate CSVs: SKIPPED ---")
+  log_msg("--- 3e. Counterfactual rate CSV: SKIPPED ---")
 } else {
 
-# --- 3d. USMCA utilization shares (copy from tracker resources) ---
-
-log_msg("  Copying USMCA utilization shares...")
-if (!HAVE_SIBLING) {
-  log_msg("    WARNING: USMCA share files are not in the shared publish and")
-  log_msg("    no sibling checkout found -- skipping (see docs/shared_publish_extensions.md).")
-} else {
-  USMCA_DIR <- file.path(RAW_DIR, "usmca_shares")
-  dir.create(USMCA_DIR, showWarnings = FALSE, recursive = TRUE)
-
-  # 2024 annual shares (pre-tariff baseline)
-  usmca_2024_src <- file.path(TRACKER_DIR, "resources", "usmca_product_shares_2024.csv")
-  if (file.exists(usmca_2024_src)) {
-    file.copy(usmca_2024_src, file.path(USMCA_DIR, basename(usmca_2024_src)), overwrite = TRUE)
-    log_msg("    -> usmca_product_shares_2024.csv")
-  } else {
-    log_msg("    WARNING: usmca_product_shares_2024.csv not found in tracker")
-  }
-
-  # Monthly 2025 + available 2026 shares
-  n_monthly <- 0L
-  for (y in 2025:2026) {
-    months_to_try <- if (y == 2025) 1:12 else 1:12
-    for (m in months_to_try) {
-      src <- file.path(TRACKER_DIR, "resources",
-                       sprintf("usmca_product_shares_%d_%02d.csv", y, m))
-      if (file.exists(src)) {
-        file.copy(src, file.path(USMCA_DIR, basename(src)), overwrite = TRUE)
-        n_monthly <- n_monthly + 1L
-      }
-    }
-  }
-  log_msg(sprintf("    -> %d monthly USMCA share files copied", n_monthly))
-
-  # Carry forward latest available share file to fill gaps in analysis window.
-  # Currently: Feb 2026 not yet available from DataWeb; carry forward Jan 2026.
-  jan_2026 <- file.path(USMCA_DIR, "usmca_product_shares_2026_01.csv")
-  feb_2026 <- file.path(USMCA_DIR, "usmca_product_shares_2026_02.csv")
-  if (file.exists(jan_2026) && !file.exists(feb_2026)) {
-    file.copy(jan_2026, feb_2026, overwrite = FALSE)
-    log_msg("    NOTE: Carried forward Jan 2026 shares -> Feb 2026 (DataWeb not yet available)")
-  }
-} # end 3d sibling guard
-
-
-# --- 3e. Counterfactual month-level rate CSVs (day-weighted scenarios) ---
+# --- 3e. Counterfactual month-level rate CSV (day-weighted) ---
 #
-# Produces HS10 x country x month total_rate panels for USMCA counterfactuals,
-# for consumption by 02_counterfactual_ladder.do. Reads the tracker's per-
-# scenario snapshots directly (built via src/build_usmca_scenarios.R — see
-# data/timeseries/<scenario>/) and day-weights each scenario's per-revision
-# rates to monthly using the same mrw logic as before.
-#
-# Previously this section reconstructed post-USMCA rates from statutory_rate_*
-# components + share files; that logic now lives in the tracker and is
-# replaced by a direct read of the scenario snapshots.
-#
-# Scenarios written:
-#   counterfactual_usmca_none.csv      -- 0% utilization (upper bound)
-#   counterfactual_usmca2024.csv       -- 2024 annual shares (pre-tariff baseline; S0)
-#   counterfactual_usmca_monthly.csv   -- actual monthly 2025-2026 shares (explainer)
-#   counterfactual_h2avg.csv           -- post-July 2025 average shares (tracker production
-#                                         baseline; S1/S2 panel rate_h2avg). All four
-#                                         use the same day-weighting machinery so the
-#                                         scenarios are apples-to-apples comparable.
+# Produces the HS10 x country x month total_rate panel consumed by 02a:
+#   counterfactual_h2avg.csv  -- post-July-2025 USMCA production rates (S1/S2
+#                                panel rate_h2avg), day-weighted to monthly.
+# Reads the tracker's top-level (== usmca_h2avg) snapshots and day-weights each
+# revision's rates across the months it was in force (mrw logic below).
 
-log_msg("  Building counterfactual rate CSVs (from scenario snapshots)...")
+log_msg("  Building counterfactual_h2avg.csv (day-weighted snapshots)...")
 
 # Load revision dates for day-weighting. The 3c export already swaps
 # policy_effective_date into effective_date; the coalesce here is an
@@ -1299,13 +1170,6 @@ mrw <- lapply(month_starts, function(m1) {
 mrw <- bind_rows(mrw)
 log_msg(sprintf("    %d month-revision pairs for day-weighting", nrow(mrw)))
 
-scenario_outputs <- list(
-  usmca_none    = "counterfactual_usmca_none.csv",
-  usmca_2024    = "counterfactual_usmca2024.csv",
-  usmca_monthly = "counterfactual_usmca_monthly.csv",
-  usmca_h2avg   = "counterfactual_h2avg.csv"
-)
-
 # Census (hs10 x cty) universe, for expanding the tracker's 8-digit leaf HTS
 # lines (kept since June 2026, padded to xxxxxxxx00) to the 10-digit stat
 # suffixes Census actually reports. Without this the Stata exact-hs10 merges
@@ -1324,11 +1188,14 @@ census_hs8_pairs <- if (file.exists(imdb_agg_path)) {
   NULL
 }
 
-build_counterfactual <- function(scenario, out_file) {
-  scn_src <- file.path(TRACKER_DIR, "data", "timeseries", scenario)
-  if (!dir.exists(scn_src)) {
-    log_msg(sprintf("    WARNING: scenario dir %s not found -- skipping %s",
-                    scn_src, scenario))
+# Sibling-mode counterfactual builder: day-weights the tracker's RDS snapshots
+# in snap_dir (one snapshot_<rev>.rds per revision) into an HS10 x country x
+# month rate panel. The production S1/S2 panel reads the top-level timeseries
+# dir; the retired per-USMCA-scenario subdirs are no longer built or consumed.
+build_counterfactual <- function(snap_dir, out_file) {
+  if (!dir.exists(snap_dir)) {
+    log_msg(sprintf("    WARNING: snapshot dir %s not found -- skipping %s",
+                    snap_dir, out_file))
     return(invisible(NULL))
   }
 
@@ -1336,9 +1203,9 @@ build_counterfactual <- function(scenario, out_file) {
   parts <- list()
 
   for (rev in needed_revs) {
-    f <- file.path(scn_src, paste0("snapshot_", rev, ".rds"))
+    f <- file.path(snap_dir, paste0("snapshot_", rev, ".rds"))
     if (!file.exists(f)) {
-      log_msg(sprintf("    WARNING: %s/snapshot_%s.rds missing", scenario, rev))
+      log_msg(sprintf("    WARNING: snapshot_%s.rds missing in %s", rev, snap_dir))
       next
     }
     snap <- tryCatch(readRDS(f), error = function(e) NULL)
@@ -1356,8 +1223,8 @@ build_counterfactual <- function(scenario, out_file) {
   }
 
   if (length(parts) == 0) {
-    log_msg(sprintf("    WARNING: no snapshots loaded for %s -- skipping write",
-                    scenario))
+    log_msg(sprintf("    WARNING: no snapshots loaded from %s -- skipping write",
+                    snap_dir))
     return(invisible(NULL))
   }
 
@@ -1396,12 +1263,10 @@ build_counterfactual <- function(scenario, out_file) {
 # Publish-mode variant of build_counterfactual: day-weights snapshot CSVs
 # (exported from publish parquet in 3a) into an HS10 x country x month rate
 # panel with the same machinery as build_counterfactual (mrw weights +
-# 8-digit leaf expansion). Used for:
-#   SNAP_DIR (top-level)     -> counterfactual_h2avg.csv         (S1/S2; the
-#     tracker verifies usmca_h2avg == top-level production, so rate_h2avg
-#     == top-level total_rate)
-#   SNAP_DIR/usmca_2024      -> counterfactual_usmca2024.csv     (S0)
-#   SNAP_DIR/usmca_monthly   -> counterfactual_usmca_monthly.csv (explainer)
+# 8-digit leaf expansion):
+#   SNAP_DIR (top-level) -> counterfactual_h2avg.csv (S1/S2; the tracker
+#     verifies usmca_h2avg == top-level production, so rate_h2avg ==
+#     top-level total_rate).
 build_counterfactual_from_snapshot_csvs <- function(snap_dir, out_file) {
   # Stream per year-month and append to the CSV, so peak memory is bounded by
   # one month's revision snapshots rather than all (rev x ym) copies at once.
@@ -1482,37 +1347,19 @@ build_counterfactual_from_snapshot_csvs <- function(snap_dir, out_file) {
   invisible(NULL)
 }
 
-# Scenario rate panels. With a shared publish the h2avg panel comes from the
-# top-level snapshots, and -- since publish vintage 2026-06-10-22 -- the
-# usmca_2024 (S0) and usmca_monthly panels from the published scenario
-# snapshots exported in 3a. Presence of counterfactual_usmca2024.csv flips
-# have_s0 in 01b, so the ladder runs S0-S4 + T; vintages without scenario
-# snapshots degrade to S1-S4 + T as before. usmca_none stays checkout-only
-# (not published, not used by the R ladder).
+# S1/S2 rate panel. counterfactual_h2avg.csv is the only counterfactual the
+# ladder consumes: publish mode day-weights the top-level snapshot CSVs; sibling
+# mode day-weights the tracker's top-level production RDS snapshots. The tracker
+# verifies usmca_h2avg == top-level production, so the top-level total_rate is
+# rate_h2avg; the retired per-scenario usmca_h2avg/ subdir is no longer built.
 if (USE_SHARED_TRACKER) {
   log_msg("  Publish mode: building counterfactual_h2avg.csv from top-level snapshots...")
   build_counterfactual_from_snapshot_csvs(SNAP_DIR, "counterfactual_h2avg.csv")
-  pub_scn_outputs <- c(usmca_2024    = "counterfactual_usmca2024.csv",
-                       usmca_monthly = "counterfactual_usmca_monthly.csv")
-  for (scn in names(pub_scn_outputs)) {
-    scn_dir <- file.path(SNAP_DIR, scn)
-    if (length(list.files(scn_dir, pattern = "^snapshot_.*\\.csv$")) == 0) {
-      log_msg(sprintf("    NOTE: no %s snapshot CSVs under %s --", scn, scn_dir))
-      log_msg(sprintf("    %s not built; ladder runs without it.",
-                      pub_scn_outputs[[scn]]))
-      next
-    }
-    log_msg(sprintf("  Publish mode: building %s from %s snapshots...",
-                    pub_scn_outputs[[scn]], scn))
-    build_counterfactual_from_snapshot_csvs(scn_dir, pub_scn_outputs[[scn]])
-  }
 } else if (!HAVE_SIBLING) {
-  log_msg("    WARNING: scenario snapshots require the sibling checkout --")
-  log_msg("    skipping counterfactual rate builds (see docs/shared_publish_extensions.md).")
+  log_msg("    WARNING: counterfactual_h2avg.csv requires a shared publish or sibling")
+  log_msg("    checkout -- skipping (see docs/shared_publish_extensions.md).")
 } else {
-  for (scn in names(scenario_outputs)) {
-    build_counterfactual(scn, scenario_outputs[[scn]])
-  }
+  build_counterfactual(ts_dir, "counterfactual_h2avg.csv")
 }
 
 
@@ -1666,10 +1513,13 @@ if (!file.exists(imdb_detail_path)) {
 #
 # Pre-preference base and recip components come from top-level snapshots
 # (statutory_base_rate, statutory_rate_ieepa_recip), day-weighted to monthly.
+# Both are PRE-preference statutory rates; the recip delta must NOT use the net
+# rate_ieepa_recip, which has already been reduced by the USMCA content split
+# and the post-MFN floor recompute (see the recip_col selection below).
 #
 # Schema is a delta (not a full counterfactual rate): only cells with positive
-# non-USMCA preference share are written. Stata 05 merges this onto S2 and
-# computes S3 = rate_usmca_monthly - delta_base - delta_recip (S3 = S2 for
+# non-USMCA preference share are written. 01b merges this onto S2 (rate_h2avg)
+# and computes S3 = rate_h2avg - delta_base - delta_recip (S3 = S2 for
 # cells absent from this file). This avoids materializing a 66M-row full
 # counterfactual that would mostly duplicate S2.
 #
@@ -1710,6 +1560,26 @@ if (!shares_built && !file.exists(shares_path)) {
   # subset (~150K rows / ym).
   log_msg("    Day-weighting pre-preference base + recip (per-ym streaming)...")
 
+  # Reciprocal rate column for the delta. Prefer statutory_rate_ieepa_recip (the
+  # pre-USMCA, pre-stacking rate the delta wants); fall back to the net
+  # rate_ieepa_recip only when the snapshot export lacks it (older vintages),
+  # which slightly understates delta_recip on USMCA content-split + floor cells.
+  recip_col <- local({
+    probe <- list.files(SNAP_DIR, pattern = "^snapshot_.*\\.csv$",
+                         full.names = TRUE)[1]
+    hdr <- if (!is.na(probe))
+      names(read_csv(probe, n_max = 0, show_col_types = FALSE)) else character()
+    if ("statutory_rate_ieepa_recip" %in% hdr) {
+      "statutory_rate_ieepa_recip"
+    } else {
+      log_msg(paste("    NOTE: statutory_rate_ieepa_recip absent from snapshots",
+                    "-- using net rate_ieepa_recip for the S2->S3 reciprocal",
+                    "delta (understates delta on USMCA content-split / floor",
+                    "cells; older publish vintage?)."))
+      "rate_ieepa_recip"
+    }
+  })
+
   ym_strs <- sort(unique(shares$year_month))
   delta_parts <- list()
 
@@ -1735,20 +1605,17 @@ if (!shares_built && !file.exists(shares_path)) {
         next
       }
       snap <- read_csv(f,
-                        col_types = cols(.default = col_character(),
-                                         statutory_base_rate = col_double(),
-                                         statutory_rate_ieepa_recip = col_double()),
-                        col_select = c("hts10", "country",
-                                       "statutory_base_rate",
-                                       "statutory_rate_ieepa_recip"),
+                        col_types = cols(.default = col_character()),
+                        col_select = all_of(c("hts10", "country",
+                                              "statutory_base_rate", recip_col)),
                         progress = FALSE) |>
         rename(hs10 = hts10, cty_code = country)
 
       ym_contribs[[j]] <- snap |>
         semi_join(ym_share_keys, by = c("hs10", "cty_code")) |>
         transmute(hs10, cty_code,
-                  wtd_base  = statutory_base_rate * weight,
-                  wtd_recip = statutory_rate_ieepa_recip * weight)
+                  wtd_base  = as.numeric(statutory_base_rate) * weight,
+                  wtd_recip = as.numeric(.data[[recip_col]]) * weight)
       rm(snap); gc(verbose = FALSE)
     }
 

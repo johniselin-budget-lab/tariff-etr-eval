@@ -6,14 +6,13 @@
 # gap newly decomposed via the strip modules ported from tariff-etr-adj.
 #
 # Tiers (percent; rates x weights over the panel):
-#   S0: rate_2024     x imports     (USMCA 2024 baseline x 2024 wts; full mode)
 #   S1: rate_h2avg    x imports     (post-July-2025 USMCA x 2024 wts)
 #   S2: rate_h2avg    x con_val_mo  (              "      x monthly wts)
 #   S3: rate_all_pref x con_val_mo  (+ non-USMCA preferences)
 #   S4: sum(cal_dut_mo)/sum(con_val_mo)   (Census collected)
 #   T : Treasury actual ETR
 #
-# Channels: gap_adjustment (S0-S1, full mode), gap_diversion (S1-S2),
+# Channels: gap_diversion (S1-S2),
 # gap_others (S2-S3), gap_residual (S3-S4), gap_timing (S4-T). gap_timing is
 # further split into gap_timing_deminimis + gap_timing_adcvd +
 # gap_timing_residual using the strip estimates (collection channels that
@@ -32,9 +31,7 @@ source("code/strips/deminimis_strip.R")
 
 msg("[02a] Counterfactual ladder...")
 panel   <- readRDS(file.path(DIR_PROCESSED, "panel.rds"))
-HAVE_S0 <- isTRUE(attr(panel, "have_s0"))
 VINTAGE <- tracker_vintage()
-if (!HAVE_S0) msg("  publish mode: S0 absent -- ladder runs S1-S4 + T")
 
 # --- Treasury revenue ---------------------------------------------------------
 rev <- read_csv(file.path(DIR_RAW, "tariff_revenue.csv"),
@@ -48,7 +45,6 @@ write_csv(rev, file.path(DIR_TABLES, "revenue_monthly.csv"))
 # --- Aggregate ladder -----------------------------------------------------------
 msg("  [B] Aggregate tiers...")
 tiers <- list(
-  if (HAVE_S0) compute_tier(panel, "rate_2024", "imports", "s0"),
   compute_tier(panel, "rate_h2avg",    "imports",    "s1"),
   compute_tier(panel, "rate_h2avg",    "con_val_mo", "s2"),
   compute_tier(panel, "rate_all_pref", "con_val_mo", "s3"),
@@ -90,8 +86,6 @@ ladder <- ladder %>%
                              (imports_value * 1e6),
     gap_timing_adcvd     = -100 * coalesce(adc, 0) / (imports_value * 1e6),
     gap_timing_residual  = gap_timing - gap_timing_deminimis - gap_timing_adcvd)
-if (HAVE_S0) ladder <- ladder %>%
-  mutate(gap_adjustment = s0 - s1, gap_total = s0 - t)
 ladder <- ladder %>% select(-imports_value, -deminimis_usd) %>%
   mutate(tracker_vintage = VINTAGE)
 
@@ -99,13 +93,12 @@ write_csv(ladder, file.path(DIR_TABLES, "counterfactual_ladder.csv"))
 write_csv(ladder, file.path(DIR_TABLES, "decomp_monthly.csv"))
 msg("  ladder (percent):")
 print(as.data.frame(ladder %>%
-  select(year_month, any_of(c("s0")), s1, s2, s3, s4, t) %>%
+  select(year_month, s1, s2, s3, s4, t) %>%
   mutate(across(where(is.numeric), ~round(.x, 2)))), row.names = FALSE)
 
 # --- Country ladder (no T: Treasury is not by-country) ---------------------------
 msg("  [D] Country ladder...")
 cty <- list(
-  if (HAVE_S0) compute_tier(panel, "rate_2024", "imports", "s0", by = "partner_group"),
   compute_tier(panel, "rate_h2avg",    "imports",    "s1", by = "partner_group"),
   compute_tier(panel, "rate_h2avg",    "con_val_mo", "s2", by = "partner_group"),
   compute_tier(panel, "rate_all_pref", "con_val_mo", "s3", by = "partner_group"),
@@ -117,7 +110,6 @@ by_country <- Reduce(function(a, b)
   mutate(gap_diversion = s1 - s2, gap_others = s2 - s3,
          gap_residual = s3 - s4) %>%
   arrange(year_month, partner_group)
-if (HAVE_S0) by_country <- by_country %>% mutate(gap_adjustment = s0 - s1)
 write_csv(by_country, file.path(DIR_TABLES, "counterfactual_by_country.csv"))
 
 by_country %>%
@@ -149,8 +141,7 @@ daily %>%
   write_csv(file.path(DIR_TABLES, "baseline_etr.csv"))
 
 write_run_meta("02a_ladder",
-               notes = sprintf("have_s0=%s; deminimis=%s; adcvd=%s",
-                               HAVE_S0,
+               notes = sprintf("deminimis=%s; adcvd=%s",
                                !all(dm$deminimis_usd == 0),
                                is.finite(adc)))
 msg("[02a] done.")

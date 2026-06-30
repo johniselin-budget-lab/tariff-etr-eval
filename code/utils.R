@@ -34,18 +34,12 @@ ANALYSIS_LO <- "2025-01"
 ANALYSIS_HI <- "2026-03"
 
 ym_date <- function(ym) as.Date(paste0(ym, "-01"))
-# Stata %tm integer (months since 1960m1) — used by the VMR event arithmetic
-# and when comparing against Stata-exported CSVs.
+# Months since 1960m1 (Stata %tm convention) — used by the VMR event arithmetic.
 ym_int <- function(ym) {
   y <- as.integer(substr(ym, 1, 4)); m <- as.integer(substr(ym, 6, 7))
   (y - 1960L) * 12L + (m - 1L)
 }
 int_ym <- function(i) sprintf("%04d-%02d", 1960L + i %/% 12L, i %% 12L + 1L)
-# Stata's CSV export renders %tm as "2025m1" — parse those when validating.
-stata_ym <- function(s) {
-  y <- as.integer(sub("m.*", "", s)); m <- as.integer(sub(".*m", "", s))
-  sprintf("%04d-%02d", y, m)
-}
 
 # --- Partner groups (Census country codes; ports assign_partner_group) -------
 CTY_CHINA <- "5700"; CTY_CANADA <- "1220"; CTY_MEXICO <- "2010"

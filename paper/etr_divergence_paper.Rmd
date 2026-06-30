@@ -61,10 +61,17 @@ fig <- function(f) {
 }
 
 # --- Load output tables -------------------------------------------------------
-decomp     <- rd("decomp_monthly.csv")          # 6-tier monthly: s0..s4,t + gaps
+decomp     <- rd("decomp_monthly.csv")          # 5-tier monthly: s1..s4,t + gaps
 div_cty    <- rd("diversion_by_country_avg.csv") # period-mean composition by partner
 div_prod   <- rd("diversion_by_product_avg.csv") # period-mean composition by product
 cty_avg    <- rd("counterfactual_by_country_avg.csv")
+
+# The pipeline writes year_month as "2025-01"; the accessors and window keys
+# below use the Stata-style "2025m1". Derive ym so both stay in sync.
+if (!is.null(decomp) && !"ym" %in% names(decomp) && "year_month" %in% names(decomp)) {
+  decomp$ym <- paste0(substr(decomp$year_month, 1, 4), "m",
+                      as.integer(substr(decomp$year_month, 6, 7)))
+}
 
 # --- Convenience accessors ----------------------------------------------------
 gv <- function(ym_, col) if (!is.null(decomp)) decomp[[col]][decomp$ym == ym_] else NA
@@ -224,19 +231,18 @@ $$
 \tau_t \;=\; \frac{R_t}{I_t} \;=\; \frac{\sum_{p,c} w_{pc}(t)\, r_{pc}(t)}{\sum_{p,c} w_{pc}(t)}.
 $$
 
-We construct six measures of $\tau_t$ that differ only in *which* rate panel and
+We construct five measures of $\tau_t$ that differ only in *which* rate panel and
 *which* weight panel enter the average. We give each a descriptive name and use
 those names throughout; Table \ref{tab:tiers} is the master key.
 
 \begin{table}[H]
 \centering
-\caption{The ETR ladder. All rate panels share the same authority stacking, metal-content rules, and MFN-exemption logic; they differ only in the USMCA claim-rate input. The two observed measures (Census-declared, Treasury-realized) are data, not statutory reconstructions.}
+\caption{The ETR ladder. All rate panels share the same authority stacking, metal-content rules, and MFN-exemption logic, and the statutory reconstructions share the post-July 2025 USMCA claim rate --- differing only in their weight panel and the non-USMCA preference step. The two observed measures (Census-declared, Treasury-realized) are data, not statutory reconstructions.}
 \label{tab:tiers}
 \begin{tabular}{lll}
 \toprule
 Measure & Rate input & Weight input \\
 \midrule
-Baseline statutory      & statutory, USMCA at 2024 claim rates        & 2024 imports \\
 Announced statutory      & statutory, USMCA at post-July 2025 rates    & 2024 imports \\
 Composition-adjusted     & statutory, USMCA at post-July 2025 rates    & monthly imports \\
 Preference-adjusted      & + non-USMCA preferences applied             & monthly imports \\
@@ -252,11 +258,6 @@ import weights, and by construction it equals the public Budget Lab tracker's
 daily statutory ETR collapsed to monthly. Stepping down the ladder turns on one
 channel at a time:
 
-- **USMCA adjustment** (baseline $\to$ announced): hold 2024 weights and move the
-  USMCA claim rate from its 2024 level (~38\% Canada, ~50\% Mexico) to the
-  post-July 2025 level. This is largely retrospective --- firms filed claims late
-  and a July 2025 USITC reporting change made utilization visible --- so we treat
-  it as baseline backstory rather than a behavioral channel.
 - **Import composition** (announced $\to$ composition-adjusted): hold rates fixed
   and shift weights from 2024 to actual monthly imports. This isolates the effect
   of the changing import basket. We call it *import composition* rather than
@@ -274,8 +275,7 @@ channel at a time:
   statutory step.
 
 These channels are additive by construction: the announced-to-realized gap is
-the sum of import composition, non-USMCA preferences, residual, and timing, and
-the full gap adds the USMCA-adjustment backstory.
+the sum of import composition, non-USMCA preferences, residual, and timing.
 
 ### Decomposing import composition: between and within groups
 
@@ -332,8 +332,10 @@ metal-content scaling for Section 232 (the metal share carries the 232 rate; the
 non-metal share carries reciprocal and 122), country-specific stacking rules,
 USMCA scaling by claim share (with a 0.40 U.S.-content rule for auto and
 medium/heavy-duty parts), HS2-by-country MFN exemption shares, and IEEPA floor
-adjustments. All six measures use the *same* stack; only the USMCA claim-rate
-input differs across the four statutory panels.
+adjustments. All five measures use the *same* stack and the same post-July 2025
+USMCA claim rate; the three statutory panels differ only in their weight panel
+(announced vs.\ composition-adjusted) and the non-USMCA preference subtraction
+(preference-adjusted).
 
 The non-USMCA preference step subtracts, per cell, the authority components that
 each preference exempts. Letting $s_q$ be the observed claim share for preference
@@ -416,13 +418,13 @@ peaking near `r f2(gv("2025m11","t"))`\% in late 2025, and falling to
 
 ## The full ladder
 
-Figure \ref{fig:ladder} shows all six measures together. The three statutory
+Figure \ref{fig:ladder} shows all five measures together. The three statutory
 reconstructions (announced, composition-adjusted, preference-adjusted) bunch
 tightly after mid-2025, which means the dominant gap is between the announced
 rate and what is realized --- and most of the action lives in the back-end
 residual rather than in composition or preferences.
 
-```{r ladder, fig.cap="The full ETR ladder, January 2025--March 2026. From top: baseline statutory (backstory), announced statutory (anchor), composition-adjusted, preference-adjusted, and Treasury-realized. The Census-declared measure sits between preference-adjusted and Treasury-realized."}
+```{r ladder, fig.cap="The full ETR ladder, January 2025--March 2026. From top: announced statutory (anchor), composition-adjusted, preference-adjusted, and Treasury-realized. The Census-declared measure sits between preference-adjusted and Treasury-realized."}
 knitr::include_graphics(fig("figure_ladder.png"))
 ```
 
@@ -436,23 +438,23 @@ March) as Treasury cash receipts come to *exceed* Census-declared duties.
 
 ```{r windows, results='asis'}
 if (!is.null(decomp)) {
-  cols <- c("s0","s1","s2","s3","s4","t",
-            "gap_adjustment","gap_diversion","gap_others","gap_residual","gap_timing")
+  cols <- c("s1","s2","s3","s4","t",
+            "gap_diversion","gap_others","gap_residual","gap_timing")
   wtab <- t(sapply(windows, function(yms) {
     sub <- decomp[decomp$ym %in% yms, , drop = FALSE]
     colMeans(sub[cols], na.rm = TRUE)
   }))
   wdf <- data.frame(Window = rownames(wtab), round(wtab, 2), row.names = NULL,
                     check.names = FALSE)
-  colnames(wdf) <- c("Window", "Base", "Ann", "Comp", "Pref", "Cens", "Treas",
-                     "USMCA", "ImpComp", "NonUSMCA", "Resid", "Timing")
+  colnames(wdf) <- c("Window", "Ann", "Comp", "Pref", "Cens", "Treas",
+                     "ImpComp", "NonUSMCA", "Resid", "Timing")
   kbl <- knitr::kable(
     wdf, format = "latex", booktabs = TRUE, linesep = "", row.names = FALSE,
     caption = "Sub-period averages by policy window. Left block: ladder measures (\\%). Right block: channel gaps (pp). Post-SCOTUS covers only two months and should be read as directional."
   )
   if (requireNamespace("kableExtra", quietly = TRUE)) {
     kbl <- kableExtra::add_header_above(
-      kbl, c(" " = 1, "Ladder measures (\\\\%)" = 6, "Channel gaps (pp)" = 5), escape = FALSE)
+      kbl, c(" " = 1, "Ladder measures (\\\\%)" = 5, "Channel gaps (pp)" = 4), escape = FALSE)
     kbl <- kableExtra::kable_styling(kbl, latex_options = c("scale_down", "HOLD_position"))
   }
   kbl
@@ -494,10 +496,9 @@ check that the anchor is not idiosyncratic.
 # Decompositions
 
 We now attribute the two largest decomposable channels --- import composition and
-the back-end residual --- to partner countries and product groups. The USMCA
-adjustment is, by construction, almost entirely Canada and Mexico (the only
-USMCA-eligible partners) and the non-USMCA preferences channel is small and
-broadly distributed, so we focus the discussion here.
+the back-end residual --- to partner countries and product groups. The non-USMCA
+preferences channel is small and broadly distributed, so we focus the discussion
+here.
 
 ## By country
 
@@ -574,14 +575,13 @@ knitr::include_graphics(fig("figure_s2s4_heatmap.png"))
 
 ## All channels at once
 
-Figure \ref{fig:attr} places the four decomposable channels side by side on a
-common scale, partitioned by country. The reading is clean: the USMCA adjustment
-is Canada and Mexico by construction; import composition is China; non-USMCA
-preferences are small and broad; and the residual shows the widest dispersion,
-with Canada and Mexico prominent in mid-2025 and the EU and rest-of-world
-prominent later. The aggregate-only timing channel is not shown.
+Figure \ref{fig:attr} places the three decomposable channels side by side on a
+common scale, partitioned by country. The reading is clean: import composition
+is China; non-USMCA preferences are small and broad; and the residual shows the
+widest dispersion, with Canada and Mexico prominent in mid-2025 and the EU and
+rest-of-world prominent later. The aggregate-only timing channel is not shown.
 
-```{r attr, fig.cap="The four decomposable channels by partner group on a common vertical scale. Timing (Census-declared to Treasury-realized) is aggregate-only and omitted."}
+```{r attr, fig.cap="The three decomposable channels by partner group on a common vertical scale. Timing (Census-declared to Treasury-realized) is aggregate-only and omitted."}
 knitr::include_graphics(fig("figure_attribution_country.png"))
 ```
 

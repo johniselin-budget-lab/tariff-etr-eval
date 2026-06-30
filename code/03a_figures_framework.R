@@ -29,21 +29,18 @@ msg("[03a] Framework figures...")
 tbl <- function(f) read_csv(file.path(DIR_TABLES, f), show_col_types = FALSE)
 
 ladder  <- tbl("decomp_monthly.csv")  %>% mutate(date = ym_date(year_month))
-HAVE_S0 <- "s0" %in% names(ladder)
 
 pg_factor   <- function(x) factor(x, levels = PARTNER_LEVELS)
 prod_factor <- function(x) factor(x, levels = PRODUCT_LEVELS)
 month_axis  <- scale_x_date(date_breaks = "2 months", date_labels = "%b %Y")
 
 # --- Ladder lines --------------------------------------------------------------
-tier_levels <- c(if (HAVE_S0) "s0", "s1", "s2", "s3", "s4", "t")
-tier_labels <- c(if (HAVE_S0) "S0: USMCA 2024 base x 2024 wts",
-                 "S1: Statutory x 2024 wts", "S2: Statutory x monthly wts",
+tier_levels <- c("s1", "s2", "s3", "s4", "t")
+tier_labels <- c("S1: Statutory x 2024 wts", "S2: Statutory x monthly wts",
                  "S3: + non-USMCA preferences", "S4: Census collected",
                  "T: Treasury actual")
 tier_cols <- setNames(
-  c(if (HAVE_S0) "#CC79A7", "#0072B2", "#56B4E9", "#009E73", "#E69F00",
-    "#D55E00"), tier_levels)
+  c("#0072B2", "#56B4E9", "#009E73", "#E69F00", "#D55E00"), tier_levels)
 df <- ladder %>%
   pivot_longer(all_of(tier_levels), names_to = "tier", values_to = "etr") %>%
   mutate(tier = factor(tier, tier_levels, tier_labels))
@@ -153,9 +150,9 @@ save_fig(stacked_group(attr_p %>% mutate(val = residual_pp), "product_group",
          "figure_residual_product", "Residual: product contributions",
          "Stacked monthly, signed; sums to the S3-S4 gap")
 
-# --- 4-channel attribution facets -----------------------------------------------------
+# --- 3-channel attribution facets -----------------------------------------------------
 facet_attr <- function(df, group, cols, stub, title) {
-  chans <- c(adjustment_pp = "USMCA adjustment", diversion_pp = "Import composition",
+  chans <- c(diversion_pp = "Import composition",
              others_pp = "Non-USMCA preferences", residual_pp = "Residual")
   d <- df %>%
     pivot_longer(all_of(names(chans)), names_to = "ch", values_to = "pp") %>%
@@ -174,9 +171,9 @@ facet_attr <- function(df, group, cols, stub, title) {
            width = 12, height = 8)
 }
 facet_attr(attr_c, "partner_group", PARTNER_COLS, "figure_attribution_country",
-           "Per-country attribution across the four decomposable channels")
+           "Per-country attribution across the three decomposable channels")
 facet_attr(attr_p, "product_group", PRODUCT_COLS, "figure_attribution_product",
-           "Per-product attribution across the four decomposable channels")
+           "Per-product attribution across the three decomposable channels")
 
 # --- S2 vs S4 vs T -----------------------------------------------------------------
 cmp <- tbl("cmp_overall_monthly.csv") %>% mutate(date = ym_date(year_month))

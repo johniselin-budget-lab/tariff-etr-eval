@@ -8,10 +8,8 @@
 #                         vs Treasury actual, with policy-event reference lines
 #   figure_daily_overlay  paper 4.5: daily statutory ETR with monthly means
 #
-# The USMCA adjustment explainer (Stata 03b section D) is not yet ported to
-# R. Its S0 / usmca_monthly input panels exist in publish mode since tracker
-# vintage 2026-06-10-22 -- only the figure port remains; see
-# docs/open_questions.md #2.
+# The S0 USMCA-adjustment backstory tier was removed from the framework
+# (analysis runs S1-S4 + T); the Stata 03b section D explainer is not ported.
 # =============================================================================
 
 here::i_am("code/03b_figures_baseline.R")

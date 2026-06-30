@@ -5,6 +5,18 @@
 **Date:** 2026-06-07
 **Re:** contents of the shared `model_data/Tariff-Rate-Tracker/` publish on the BL cluster
 
+> **Status (2026-06-30) — mostly resolved; kept for the record.**
+> - §1 (USMCA scenario snapshots): **no longer needed.** The S0 tier and all
+>   USMCA-scenario plumbing were removed from `tariff-etr-eval`; the ladder runs
+>   S1–S4 + T and builds `counterfactual_h2avg` from the top-level snapshots.
+> - §2 (`country_code_vocabulary`): fixed — the manifest now declares Census codes.
+> - §3 (`s232_usmca_eligible`): moot — that column is no longer consumed.
+> - "Not asking for → 2024 import weights": **superseded.** The publish now ships
+>   `weights/import_weights_hs10_country.csv.gz` and `01a` consumes it directly;
+>   the self-build script was removed.
+> - Note the schema-v2.0 rename `statutory_rate_* → rate_*` (e.g. the pref-delta's
+>   reciprocal rate is now `rate_ieepa_recip`); `statutory_base_rate` kept its name.
+
 ## Context
 
 `tariff-etr-eval` now reads the shared tracker publish directly (as of the

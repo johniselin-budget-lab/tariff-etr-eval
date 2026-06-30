@@ -9,9 +9,8 @@
 #      country and product partitions. Both lenses sum to gap_diversion.
 #   2. S2 -> S3 (other preferences) and S3 -> S4 (residual): per-group dollar
 #      attribution at fixed monthly weights.
-#   3. S0 -> S1 (USMCA adjustment) attribution at 2024 weights — full mode only.
-#   4. Unified per-group attribution tables (4 channels x month x group).
-#   5. cmp_* comparison tables: S2 vs S4 vs T overall / by partner / by
+#   3. Unified per-group attribution tables (3 channels x month x group).
+#   4. cmp_* comparison tables: S2 vs S4 vs T overall / by partner / by
 #      product / HS2 ranking / top-HS10 anomalies / S1 vs S2 by group.
 #
 # Every decomposition is validated against the ladder: per-month group sums
@@ -25,7 +24,6 @@ source("code/utils.R")
 
 msg("[02b] Channel decompositions...")
 panel   <- readRDS(file.path(DIR_PROCESSED, "panel.rds"))
-HAVE_S0 <- isTRUE(attr(panel, "have_s0"))
 ladder  <- read_csv(file.path(DIR_TABLES, "counterfactual_ladder.csv"),
                     show_col_types = FALSE)
 
@@ -73,32 +71,20 @@ res_p <- per_group_attribution(panel, "rate_all_pref", "census_etr",
 check_sums(oth_c, "others_pp",   "gap_others",   "others by country")
 check_sums(res_c, "residual_pp", "gap_residual", "residual by country")
 
-adj_c <- adj_p <- NULL
-if (HAVE_S0) {
-  msg("  [B5] S0->S1 adjustment attribution (full mode)...")
-  adj_c <- per_group_attribution(panel, "rate_2024", "rate_h2avg",
-                                 "imports", "partner_group", "adjustment_pp")
-  adj_p <- per_group_attribution(panel, "rate_2024", "rate_h2avg",
-                                 "imports", "product_group", "adjustment_pp")
-}
-
-# --- 4. Unified attribution tables -------------------------------------------------
-attr_join <- function(div, oth, res, adj, by) {
-  out <- div %>% select(year_month, all_of(by), diversion_pp = total) %>%
+# --- 3. Unified attribution tables -------------------------------------------------
+attr_join <- function(div, oth, res, by) {
+  div %>% select(year_month, all_of(by), diversion_pp = total) %>%
     left_join(oth, by = c("year_month", by)) %>%
-    left_join(res, by = c("year_month", by))
-  out <- if (is.null(adj)) mutate(out, adjustment_pp = NA_real_)
-         else left_join(out, adj, by = c("year_month", by))
-  out %>% select(year_month, all_of(by), adjustment_pp, diversion_pp,
-                 others_pp, residual_pp) %>%
+    left_join(res, by = c("year_month", by)) %>%
+    select(year_month, all_of(by), diversion_pp, others_pp, residual_pp) %>%
     arrange(year_month, .data[[by]])
 }
-write_csv(attr_join(div_c, oth_c, res_c, adj_c, "partner_group"),
+write_csv(attr_join(div_c, oth_c, res_c, "partner_group"),
           file.path(DIR_TABLES, "attribution_by_country.csv"))
-write_csv(attr_join(div_p, oth_p, res_p, adj_p, "product_group"),
+write_csv(attr_join(div_p, oth_p, res_p, "product_group"),
           file.path(DIR_TABLES, "attribution_by_product.csv"))
 
-# --- 5. S2 vs S4 vs T comparison tables --------------------------------------------
+# --- 4. S2 vs S4 vs T comparison tables --------------------------------------------
 msg("  [D] cmp_* comparison tables...")
 # overall (s2/s4 recomputed row-level so the table is self-contained)
 ladder %>%
@@ -177,5 +163,5 @@ write_csv(s1s2_by("partner_group"),
 write_csv(s1s2_by("product_group"),
           file.path(DIR_TABLES, "cmp_s1s2_product_monthly.csv"))
 
-write_run_meta("02b_decomposition", notes = sprintf("have_s0=%s", HAVE_S0))
+write_run_meta("02b_decomposition", notes = "S1-S4+T")
 msg("[02b] done.")

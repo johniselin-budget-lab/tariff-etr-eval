@@ -29,18 +29,6 @@ figures, VMR. Not yet ported from `archive/stata/`:
   - 03/03b long-tail figures: 2x2 occupancy tables (`cmp_2x2_*`),
     `monthly_summary` workbook, gap-quantile table, S2S4/S1S2 facet figures.
 
-**2. USMCA adjustment explainer figure still unported**
-*(opened 2026-06-08 as "S0 needs full mode"; narrowed 2026-06-11)*
-S0 is now resolved: publish vintage `2026-06-10-22` added the USMCA scenario
-snapshots (`scenarios/usmca_2024`, `scenarios/usmca_monthly` — delivered per
-`docs/shared_publish_extensions.md`), and 01a builds
-`counterfactual_usmca2024.csv` / `counterfactual_usmca_monthly.csv` in publish
-mode, so the ladder runs S0–S4 + T. Older vintages still degrade to S1–S4 + T
-(`have_s0` attribute on `panel.rds`). Remaining: the 03b USMCA
-adjustment-explainer figure (Stata 03b section D) was never ported to R — the
-input panels now exist, so it's just the figure port. Note the Stata golden
-(`results_stata_golden/`) predates S0 and lacks the `s0` column/figures.
-
 **3. De-minimis component and the Tariff Model** *(opened 2026-06-10)*
 02a's gap_timing decomposition estimates the postal-channel duty with the
 step estimator ported from adj (`code/strips/deminimis_strip.R`). The same
@@ -73,6 +61,43 @@ Add the sidecar write to `code/01a_pull_raw_data.R` (port the ~15 lines from
 adj's `01_data.R`) on its next touch.
 
 ## Resolved
+
+**S-1. Streamline to S1–T: drop S0, adopt published weights, reconcile schema**
+*(resolved 2026-06-30)* Four-part simplification toward a straightforward gap
+analysis:
+  - **S0 removed.** The S0 "USMCA 2024 baseline" backstory tier and all
+    USMCA-scenario plumbing (scenario snapshot exports, `build_counterfactual`
+    scenario loop, `rate_2024`/`rate_usmca_monthly`, `HAVE_S0`/`have_s0`,
+    `gap_adjustment`/`gap_total`, S0→S1 attribution, S0 figure tier, the 3d
+    USMCA-shares copy, `scripts/verify_counterfactuals.R`) are gone. The ladder
+    runs S1–S4 + T unconditionally; `counterfactual_h2avg` (S1/S2) and the
+    S2→S3 pref-delta are unchanged. (Was item #2 "S0 needs full mode".)
+  - **Published weights adopted.** 01a §3b now reads
+    `weights/import_weights_hs10_country.csv.gz` from the publish (2024 Census
+    consumption-value basis; identical $3.123T aggregate); the vendored
+    `build_import_weights.R` + `resources/hs10_gtap_crosswalk.csv` self-build
+    was deleted. Sibling-RDS fallback retained for `--refresh-tracker` runs.
+  - **SNAP_COLS reconciled to publish schema; reciprocal rate corrected.**
+    Trimmed to the consumed columns. The S2→S3 pref-delta needs the *pre*-USMCA,
+    *pre*-stacking reciprocal rate, which the tracker persists as
+    `statutory_rate_ieepa_recip` (an "extra" column kept past the canonical
+    RATE_SCHEMA by `enforce_rate_schema`). 01a now exports it when present and
+    the 3g builder prefers it, falling back to the *net* `rate_ieepa_recip`
+    (already reduced by the USMCA content split + post-MFN floor recompute, so
+    NOT interchangeable) only for older vintages that lack it, with a logged
+    warning. An interim version used the net rate unconditionally, which
+    understated `delta_recip` (hence S3) on USMCA content-split / floor cells.
+  - **`--refresh-tracker` repaired** to the restructured tracker layout
+    (`src/{pipeline,io}/`, `tools/`); scenario-build step removed. Sibling mode
+    now day-weights the **top-level** production snapshots for
+    `counterfactual_h2avg`, not the retired per-scenario `usmca_h2avg/` subdir
+    (which `--refresh-tracker` no longer builds).
+  Note: the Stata golden-reference apparatus (`results_stata_golden/`,
+  `scripts/verify_r_port.R`, `slurm/run_stata.sbatch`) was retired — the
+  archived Stata code and the underlying tariff rates have both drifted, so it
+  is no longer a valid numerical check. Publish-only consumption (dropping the
+  sibling-checkout consume path) is a possible follow-on but kept out so
+  `--refresh-tracker` stays coherent.
 
 **R-0. Stata r(109) abort in publish mode** *(resolved 2026-06-10)*
 `01_etr_clean.do` imported counterfactual CSVs with positional

@@ -4,9 +4,9 @@ Comparing actual vs. statutory effective tariff rates during the 2025–2026 US 
 
 ## Overview
 
-This project evaluates the gap between **statutory** tariff rates (what the Harmonized Tariff Schedule says importers should pay) and **actual** collection rates (customs duties collected as a share of import value). The gap is decomposed into USMCA adjustment, trade diversion, all-other preferences, residual, and timing/enforcement channels using a **six-tier framework** (S0 → S1 → S2 → S3 → S4 → T). See [Six-tier framework](#six-tier-framework) below; `docs/six_tier_framework_plan.md` carries the full math derivation and per-authority applicability matrix.
+This project evaluates the gap between **statutory** tariff rates (what the Harmonized Tariff Schedule says importers should pay) and **actual** collection rates (customs duties collected as a share of import value). The gap is decomposed into trade diversion, all-other preferences, residual, and timing/enforcement channels using a **five-rung ladder** (S1 → S2 → S3 → S4 → T). See [Statutory–actual ladder](#statutoryactual-ladder) below; `docs/six_tier_framework_plan.md` carries the full math derivation and per-authority applicability matrix. (The earlier S0 "USMCA 2024 baseline" backstory tier has been removed; the analysis lives between S1 and T.)
 
-The pipeline is **pure R**, structured like the sibling production repo [`tariff-etr-adj`](../tariff-etr-adj) (data → analysis → figures, with figures reading only CSV outputs). The original Stata pipeline is preserved in `archive/stata/` and was used as the numerical golden reference for the port (`scripts/verify_r_port.R`).
+The pipeline is **pure R**, structured like the sibling production repo [`tariff-etr-adj`](../tariff-etr-adj) (data → analysis → figures, with figures reading only CSV outputs). The original Stata pipeline is preserved in `archive/stata/` for historical reference only; it is no longer maintained as a numerical golden, since both its code and the underlying tariff rates have drifted from the current pipeline.
 
 ## Pipeline
 
@@ -31,7 +31,7 @@ Shared machinery lives in `code/utils.R` (partner/product partitions, Wong color
 
 ### Step 01a — raw data pull (`code/01a_pull_raw_data.R`)
 
-Pulls Census IMDB bulk ZIPs, tracker statutory-rate snapshots + daily ETRs (from the shared publish when configured in `config/local_paths.yaml`, else a sibling checkout), USMCA counterfactual reconstructions, non-USMCA preference shares, and Treasury revenue (vendored snapshot `resources/treasury_revenue.csv`). Flags:
+Pulls Census IMDB bulk ZIPs, tracker statutory-rate snapshots + daily ETRs + 2024 import weights (from the shared publish when configured in `config/local_paths.yaml`, else a sibling checkout), the `counterfactual_h2avg` rate panel, non-USMCA preference shares, and Treasury revenue (vendored snapshot `resources/treasury_revenue.csv`). Flags:
 
 ```bash
 Rscript code/01a_pull_raw_data.R                       # full pull
@@ -43,11 +43,11 @@ Rscript code/01a_pull_raw_data.R --tracker-data=PATH   # pin a publish vintage
 Rscript code/01a_pull_raw_data.R --no-shared-tracker   # force sibling checkout
 ```
 
-**Publish vs full mode.** Since publish vintage `2026-06-10-22` the shared publish carries the USMCA scenario snapshots (`scenarios/usmca_2024`, `scenarios/usmca_monthly`), so publish mode builds the S0 panel (`rate_2024`) and `rate_usmca_monthly` and the ladder runs the full S0–S4 + T. Against older vintages the pipeline auto-detects the missing scenarios (`have_s0` attribute on `panel.rds`) and degrades to S1–S4 + T. A tracker checkout with `DATAWEB_API_TOKEN` is now needed only to rebuild tracker data itself (`--refresh-tracker`). See `docs/shared_publish_extensions.md` and `docs/open_questions.md` #2.
+**Publish vs sibling checkout.** The shared publish carries everything the pipeline consumes — top-level statutory-rate snapshots, daily ETRs, and the 2024 import weights (`weights/import_weights_hs10_country.csv.gz`) — so the default run needs no sibling checkout. A tracker checkout with `DATAWEB_API_TOKEN` is needed only to rebuild tracker data itself (`--refresh-tracker`, which expects the restructured-tracker layout: `src/{pipeline,io,model}/` + `tools/`). See `docs/shared_publish_extensions.md`.
 
 ### Step 01b — panel build (`code/01b_build_panel.R`)
 
-One row per (HS10 × country × month) over the analysis window: Census value/duty/quantity, the day-weighted statutory rate panels (`rate_h2avg` for S1/S2, `rate_all_pref` for S3, `rate_2024` for S0 when present), 2024 + monthly weights, partner/product partitions. Integrity checks (key uniqueness, non-negative rates, S3 ≤ S2) fail fast. The per-revision `tracker_snapshots` merge from the Stata pipeline is deliberately not ported (only the archived 06 diagnostic consumed it).
+One row per (HS10 × country × month) over the analysis window: Census value/duty/quantity, the day-weighted statutory rate panels (`rate_h2avg` for S1/S2, `rate_all_pref` for S3), 2024 + monthly weights, partner/product partitions. Integrity checks (key uniqueness, non-negative rates, S3 ≤ S2) fail fast. The per-revision `tracker_snapshots` merge from the Stata pipeline is deliberately not ported (only the archived 06 diagnostic consumed it).
 
 ### Step 02a — ladder (`code/02a_ladder.R`)
 
@@ -61,7 +61,7 @@ Headline tables are stamped with the tracker vintage (`tracker_vintage` column; 
 
 ### Step 02b — decompositions (`code/02b_decomposition.R`)
 
-S1→S2 trade-diversion Shapley two-way (between/within) under the country and product partitions — both lenses sum to `gap_diversion` and are validated against the ladder each run; S2→S3 and S3→S4 per-group attributions; S0→S1 attribution in full mode; `cmp_*` comparison tables (S2 vs S4 vs T by partner/product, HS2 ranking, top-HS10 anomalies, S1 vs S2 by group).
+S1→S2 trade-diversion Shapley two-way (between/within) under the country and product partitions — both lenses sum to `gap_diversion` and are validated against the ladder each run; S2→S3 and S3→S4 per-group attributions; `cmp_*` comparison tables (S2 vs S4 vs T by partner/product, HS2 ranking, top-HS10 anomalies, S1 vs S2 by group).
 
 ### Step 02c — value misreporting (`code/02c_vmr.R`)
 
@@ -76,45 +76,34 @@ Rscript 00_run_all.R --skip-data      # 02a -> 03b, reuse panel.rds
 Rscript 00_run_all.R --figures-only   # 03a + 03b only
 ```
 
-On the BL cluster run via SLURM (`slurm/RUNBOOK.md`): `sbatch slurm/run_pull.sbatch` (stage 1, data) then `sbatch slurm/run_r.sbatch` (stage 2, analysis; ~5 min). The panel build freads a 73M-row rate file — use a compute node, not the login node. `slurm/run_stata.sbatch` runs the archived Stata pipeline for golden-reference comparisons.
+On the BL cluster run via SLURM (`slurm/RUNBOOK.md`): `sbatch slurm/run_pull.sbatch` (stage 1, data) then `sbatch slurm/run_r.sbatch` (stage 2, analysis; ~5 min). The panel build freads a 73M-row rate file — use a compute node, not the login node.
 
-### Validating against the Stata golden
-
-```bash
-sbatch slurm/run_stata.sbatch          # archived Stata pipeline -> results/tables
-cp -a results results_stata_golden     # snapshot
-sbatch slurm/run_r.sbatch              # R pipeline overwrites results/tables
-Rscript scripts/verify_r_port.R        # numeric comparison, 1e-6 pp tolerance
-```
-
-## Six-tier framework
+## Statutory–actual ladder
 
 | Tier | Definition |
 |------|------------|
-| S0 | Statutory @ USMCA 2024 baseline shares × 2024 import weights *(full mode only)* |
 | S1 | Statutory @ Post-July 2025 USMCA baseline shares × 2024 import weights (= the paper's headline statutory line) |
 | S2 | Statutory @ Post-July 2025 USMCA baseline shares × monthly weights |
 | S3 | + non-USMCA preferences (Annex II / ITA / Ch98 / KORUS / GSP / FTAs), monthly IMDB-derived shares |
 | S4 | Census collected ETR (cal_dut / con_val at HS10 × cty, summed) |
 | T  | Treasury actual ETR |
 
-The waterfall decomposes the statutory–actual ETR gap into sequential channels. The S0→S1 step is "explainable backstory" (USMCA paperwork catch-up); main analysis lives between S1 and T.
+The waterfall decomposes the statutory–actual ETR gap into sequential channels (the analysis lives between S1 and T):
 
-1. **USMCA adjustment (S0 → S1)** — hold weights at 2024, shift USMCA from 2024 baseline (~38% CA / ~50% MX) to post-July 2025 baseline (~89% both). Mostly retrospective.
-2. **Trade diversion (S1 → S2)** — hold rates, shift weights from 2024 to actual monthly. Decomposed Shapley two-way in 02b.
-3. **All-other preferences (S2 → S3)** — non-USMCA preference claim shares from IMDB (`delta_base`/`delta_recip` math in `docs/six_tier_framework_plan.md` §6.6). Structurally non-negative.
-4. **Residual (S3 → S4)** — statutory-with-preferences vs Census collected: specific-duty AVE failures, tracker error, behavioral noise.
-5. **Timing / enforcement (S4 → T)** — Treasury vs Census aggregation: refunds, FTZ deferrals, cash-vs-accrual, **plus the de-minimis postal and AD/CVD channels now split out explicitly in 02a**.
+1. **Trade diversion (S1 → S2)** — hold rates, shift weights from 2024 to actual monthly. Decomposed Shapley two-way in 02b.
+2. **All-other preferences (S2 → S3)** — non-USMCA preference claim shares from IMDB (`delta_base`/`delta_recip` math in `docs/six_tier_framework_plan.md` §6.6). Structurally non-negative.
+3. **Residual (S3 → S4)** — statutory-with-preferences vs Census collected: specific-duty AVE failures, tracker error, behavioral noise.
+4. **Timing / enforcement (S4 → T)** — Treasury vs Census aggregation: refunds, FTZ deferrals, cash-vs-accrual, **plus the de-minimis postal and AD/CVD channels now split out explicitly in 02a**.
 
-The framework's S1 panel equals the tracker's daily ETR collapsed to monthly by construction, so the paper's headline §4.1 "baseline statutory" line is also S1.
+The S1 panel equals the tracker's daily ETR collapsed to monthly by construction, so the paper's headline §4.1 "baseline statutory" line is also S1. *(An earlier S0 tier — statutory at USMCA-2024 baseline shares × 2024 weights — modeled the USMCA paperwork catch-up as "explainable backstory"; it has been removed from the pipeline.)*
 
 ### Aggregation methodology
 
-All tiers are single-stage row-level value-weighted averages over the panel: `Σ(rate × weight) / Σ(weight)` (`compute_tier` in `code/utils.R`). Rate and weight columns sit on the same row; no HS2 bridging. Zero-tariff products **must be included** in the denominator (dropping them inflates the ETR from ~3.4% to ~27%). `rate_h2avg` is the tracker's production `total_rate` (USMCA at post-July-2025 claim rates), day-weighted within months; `rate_2024` and `rate_usmca_monthly` swap only the USMCA layer.
+All tiers are single-stage row-level value-weighted averages over the panel: `Σ(rate × weight) / Σ(weight)` (`compute_tier` in `code/utils.R`). Rate and weight columns sit on the same row; no HS2 bridging. Zero-tariff products **must be included** in the denominator (dropping them inflates the ETR from ~3.4% to ~27%). `rate_h2avg` is the tracker's production `total_rate` (USMCA at post-July-2025 claim rates), day-weighted within months.
 
 ## Sibling repo dependencies
 
-- [`Budget-Lab-Yale/tariff-rate-tracker`](https://github.com/Budget-Lab-Yale/tariff-rate-tracker) — statutory rates, daily ETR, import weights, revision dates, USMCA product shares. On the BL cluster the **shared publish** (`tracker_data_dir` in `config/local_paths.yaml`, copy from `config/local_paths.yaml.example`) replaces the checkout for snapshots + daily ETRs; the checkout is still needed for full-mode USMCA scenario panels.
+- [`Budget-Lab-Yale/tariff-rate-tracker`](https://github.com/Budget-Lab-Yale/tariff-rate-tracker) — statutory rates, daily ETR, 2024 import weights, revision dates. On the BL cluster the **shared publish** (`tracker_data_dir` in `config/local_paths.yaml`, copy from `config/local_paths.yaml.example`) supplies snapshots + daily ETRs + weights; a checkout is needed only to rebuild tracker data via `--refresh-tracker`.
 - [`Budget-Lab-Yale/tariff-impact-tracker`](https://github.com/Budget-Lab-Yale/tariff-impact-tracker) — Treasury revenue. Optional: the vendored snapshot `resources/treasury_revenue.csv` (provenance: `resources/treasury_revenue_SOURCE.md`) makes the pipeline self-contained.
 - [`tariff-etr-adj`](../tariff-etr-adj) (private sibling) — **production home of the η compliance-gap calibration**. The η work formerly in this repo is archived (`archive/eta/`) to avoid drifting implementations; this repo's VMR decomposition is the base-erosion sidecar to adj's `eta_by_*` deliverables.
 
@@ -132,7 +121,7 @@ All tiers are single-stage row-level value-weighted averages over the panel: `Σ
 ```
 00_run_all.R              orchestrator
 code/                     pipeline (01a/01b/02a/02b/02c/03a/03b, utils.R, strips/)
-scripts/                  verify_r_port.R, verify_counterfactuals.R
+scripts/                  ad-hoc analysis scripts (residual deep dives)
 slurm/                    RUNBOOK.md + sbatch runners (logs/ gitignored)
 resources/                committed inputs (product groups, Treasury snapshot,
                           AD/CVD curated level, crosswalks, policy events)
@@ -141,7 +130,7 @@ results/tables|figures/   gitignored, rebuilt by 02*/03*; run_meta.csv carries
                           the tracker vintage per step
 docs/                     method notes, paper outline, open_questions.md tracker
 paper/                    paper draft (Rmd)
-archive/stata/            retired Stata pipeline (golden reference for the port)
+archive/stata/            retired Stata pipeline (historical; no longer maintained)
 archive/eta/              η calibration (production home: tariff-etr-adj)
 archive/exploratory/      GTAP validation + AD/CVD spot checks
 ```

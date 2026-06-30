@@ -4,6 +4,8 @@
 
 This doc is the standalone derivation source for the framework's math: the Shapley two-way decomposition (§5–§5a), the channel-ordering rationale (§4–§5), and the per-authority applicability matrix for the non-USMCA preference delta (§6, §6.6). Tier definitions are kept synchronized with the project README; if the two ever diverge, the README is canonical.
 
+> **Update (2026-06-30): S0 removed from the pipeline.** The implemented ladder is **S1 → S2 → S3 → S4 → T** (five rungs). The S0 "USMCA 2024 baseline" tier and the S0→S1 `gap_adjustment` channel are no longer computed; the derivation below is retained for reference but is not wired into the code. The S1→S2 Shapley (§5) and S2→S3 preference-delta (§6) math is unaffected.
+
 **Companions**:
 - `paper_outline.md` — paper exposition target.
 - `tracker_miss_report.md` — Round 3 motivates the Annex II claim-rate channel that becomes part of S3.
@@ -21,7 +23,7 @@ The six-tier framework below decomposes that channel cleanly. After implementati
 
 | Tier | Definition | Rate panel × Weight |
 |---|---|---|
-| **S0** | Statutory @ USMCA 2024 baseline × 2024 weights | `rate_2024` × `imports` |
+| ~~**S0**~~ *(removed)* | Statutory @ USMCA 2024 baseline × 2024 weights | ~~`rate_2024` × `imports`~~ |
 | **S1** | Statutory @ Post-July 2025 USMCA baseline × **2024** weights (framework anchor; equals tracker daily ETR collapsed monthly) | `rate_h2avg` × `imports` |
 | **S2** | Statutory @ Post-July 2025 USMCA baseline × **monthly** weights | `rate_h2avg` × `con_val_mo` |
 | **S3** | S2 minus non-USMCA preference Δ (Annex II / ITA / Ch98 / KORUS / GSP / other_fta) | `rate_all_pref` × `con_val_mo` |

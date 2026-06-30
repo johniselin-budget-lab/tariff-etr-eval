@@ -10,8 +10,6 @@
 #   con_qy1_mo, ship_wgt_mo                      physical anchors (VMR, 02c)
 #   rate_h2avg                                   S1/S2 statutory panel (day-wtd)
 #   rate_all_pref                                S3 panel (h2avg - pref delta)
-#   rate_2024, rate_usmca_monthly                S0 / explainer panels (NA in
-#                                                publish mode -- CSVs absent)
 #   imports, w_2024, w_monthly                   2024 + monthly weights
 #   partner_group, product_group, hs2            partitions
 #
@@ -78,30 +76,6 @@ cen[is.na(delta_recip), delta_recip := 0]
 cen[, rate_all_pref := pmax(0, rate_h2avg - delta_base - delta_recip)]
 cen[, c("delta_base", "delta_recip") := NULL]
 
-# S0 + USMCA-monthly explainer panels: only present in full (DataWeb) mode.
-optional_panel <- function(dt, file, rate_name) {
-  path <- file.path(DIR_RAW, file)
-  if (!file.exists(path)) {
-    msg("      %s absent (publish mode) -- %s = NA", file, rate_name)
-    dt[, (rate_name) := NA_real_]
-    return(dt)
-  }
-  p <- fread(path, colClasses = "character", showProgress = FALSE, integer64 = "double") |> fix_int64()
-  if ("hts10" %in% names(p)) setnames(p, "hts10", "hs10")
-  p[, total_rate := as.numeric(total_rate)]
-  p <- p[year_month >= ANALYSIS_LO & year_month <= ANALYSIS_HI,
-         .(hs10, cty_code, year_month, total_rate)]
-  setnames(p, "total_rate", rate_name)
-  setkey(p, hs10, cty_code, year_month)
-  dt <- p[dt]
-  dt[is.na(get(rate_name)), (rate_name) := 0]
-  msg("      %s merged", file)
-  dt
-}
-cen <- optional_panel(cen, "counterfactual_usmca2024.csv",    "rate_2024")
-cen <- optional_panel(cen, "counterfactual_usmca_monthly.csv","rate_usmca_monthly")
-HAVE_S0 <- !all(is.na(cen$rate_2024))
-
 # --- 3. Weights ----------------------------------------------------------------
 msg("  [3] Weights...")
 w24 <- fread(file.path(DIR_RAW, "import_weights_2024.csv"),
@@ -146,11 +120,10 @@ msg("      all checks passed (%s rows)", format(nrow(cen), big.mark = ","))
 panel <- as_tibble(cen) %>%
   select(year_month, hs2, product_group, hs10, cty_code, partner_group,
          con_val_mo, cal_dut_mo, census_etr, con_qy1_mo, ship_wgt_mo,
-         rate_h2avg, rate_all_pref, rate_2024, rate_usmca_monthly,
+         rate_h2avg, rate_all_pref,
          imports, w_2024, w_monthly) %>%
   arrange(year_month, hs10, cty_code)
 attr(panel, "tracker_vintage") <- tracker_vintage()
-attr(panel, "have_s0")         <- HAVE_S0
 saveRDS(panel, file.path(DIR_PROCESSED, "panel.rds"))
 
 panel %>%
@@ -163,8 +136,7 @@ panel %>%
   write_csv(file.path(DIR_PROCESSED, "panel_summary.csv"))
 
 write_run_meta("01b_build_panel",
-               notes = sprintf("have_s0=%s; rows=%d", HAVE_S0, nrow(panel)))
-msg("[01b] panel.rds saved (%s rows; S0 %s) in %.1f min",
+               notes = sprintf("rows=%d", nrow(panel)))
+msg("[01b] panel.rds saved (%s rows) in %.1f min",
     format(nrow(panel), big.mark = ","),
-    ifelse(HAVE_S0, "present", "absent (publish mode)"),
     as.numeric(difftime(Sys.time(), t0, units = "mins")))
