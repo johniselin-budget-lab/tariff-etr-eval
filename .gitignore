@@ -34,8 +34,6 @@ output/old/
 results/*.html
 results/*.docx
 results/*.zip
-results/figures/
-results/tables/
 results/diagnostics/
 
 # Rendered docs
@@ -75,3 +73,6 @@ config/local_paths.yaml
 
 # Stata golden snapshot for the R-port verifier (scripts/verify_r_port.R)
 results_stata_golden/
+
+# Local Claude Code notes (not committed)
+CLAUDE.md

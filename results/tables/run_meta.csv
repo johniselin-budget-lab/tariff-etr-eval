@@ -1,0 +1,5 @@
+step,run_at,tracker_vintage,window_lo,window_hi,notes
+01b_build_panel,2026-07-01 14:59:45,2026-06-25-14,2025-01,2026-03,rows=2521456
+02a_ladder,2026-07-01 14:59:49,2026-06-25-14,2025-01,2026-03,deminimis=TRUE; adcvd=TRUE
+02b_decomposition,2026-07-01 14:59:57,2026-06-25-14,2025-01,2026-03,S1-S4+T
+02c_vmr,2026-07-01 15:01:57,2026-06-25-14,2025-01,2026-03,qty_mode=qy1; event_mode=flow; treated=138934
