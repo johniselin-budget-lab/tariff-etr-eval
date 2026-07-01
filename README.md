@@ -1,5 +1,13 @@
 # Tariff ETR Evaluation
 
+> **⚠️ FROZEN (2026-07-01).** This repo is no longer developed. The paper and
+> slides now live in the streamlined successor
+> [**`tariff-etr-divergence`**](https://github.com/Budget-Lab-Yale/tariff-etr-divergence)
+> (analysis core ported and validated bit-for-bit against this repo's
+> pipeline; VMR and the η-calibration were deliberately left behind — see the
+> successor's `docs/00_migration_plan.md`). This repo remains as the archive
+> of the S0/six-tier history, the VMR work, and the retired Stata pipeline.
+
 Comparing actual vs. statutory effective tariff rates during the 2025–2026 US tariff escalation.
 
 ## Overview
